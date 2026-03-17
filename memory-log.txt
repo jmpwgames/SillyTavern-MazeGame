@@ -1,0 +1,11 @@
+MazeGame Movement Memory Buffer
+Generated: 2026-03-17T04:51:24.050Z
+Game: MazeGame
+Core: html5-maze
+Seed: 392152191
+Session ID: mmu4wu7n-1bk0hu
+Session Start: 2026-03-17T04:50:57.395Z
+Reason: coop-start
+
+[2026-03-17T04:51:23.047Z] tick=1 action=RIGHT
+caption: The scene depicts a first-person perspective within a maze-like environment. The player is positioned at the corner of a room, facing a wall with a repeating circular pattern. To the left, a solid dark green wall extends upward. Above, a horizontal dark green band spans the top of the visible frame. The floor is a light gray surface. The right wall is also light gray with the same circular pattern as the front wall. The ceiling is not visible. The overall environment appears to be a simple, enclosed space with minimal decoration.

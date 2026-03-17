@@ -1,0 +1,3388 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MazeGame</title>
+    <style>
+        html, body {
+            margin: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #050505;
+        }
+
+        #game {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        #fsToggle {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 30;
+            border: 1px solid rgba(255, 255, 255, 0.35);
+            background: rgba(0, 0, 0, 0.45);
+            color: #fff;
+            padding: 6px 10px;
+            border-radius: 8px;
+            font: 600 12px/1.1 monospace;
+            cursor: pointer;
+        }
+
+        #muteToggle {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 30;
+            border: 1px solid rgba(255, 255, 255, 0.35);
+            background: rgba(0, 0, 0, 0.45);
+            color: #fff;
+            padding: 6px 10px;
+            border-radius: 8px;
+            font: 600 12px/1.1 monospace;
+            cursor: pointer;
+        }
+
+        #hint {
+            position: absolute;
+            left: 10px;
+            bottom: 10px;
+            z-index: 30;
+            max-width: 75%;
+            border: 1px solid rgba(255, 255, 255, 0.28);
+            background: rgba(0, 0, 0, 0.4);
+            color: #fff;
+            padding: 6px 9px;
+            border-radius: 7px;
+            font: 600 12px/1.2 monospace;
+        }
+
+        .overlay-ui {
+            opacity: 0;
+            transition: opacity 240ms ease;
+        }
+
+        .overlay-ui.visible {
+            opacity: 1;
+        }
+
+        #fxOverlay {
+            position: absolute;
+            inset: 0;
+            z-index: 12;
+            pointer-events: none;
+            opacity: 1;
+            background-image:
+                radial-gradient(circle at 50% 50%,
+                    rgba(0, 0, 0, 0) 0%,
+                    rgba(0, 0, 0, 0) 25%,
+                    rgba(0, 0, 0, calc(var(--fx-vignette-alpha, 0.32) * 0.18)) 50%,
+                    rgba(0, 0, 0, calc(var(--fx-vignette-alpha, 0.32) * 0.52)) 75%,
+                    rgba(0, 0, 0, var(--fx-vignette-alpha, 0.32)) 100%),
+                repeating-linear-gradient(to bottom, rgba(0, 0, 0, var(--fx-scanline-alpha, 0.45)) 0px, rgba(0, 0, 0, var(--fx-scanline-alpha, 0.45)) 2px, rgba(0, 0, 0, 0) 2px, rgba(0, 0, 0, 0) 4px);
+            background-size: 100% 100%, 100% 4px;
+            background-position: center center, 0 0;
+            background-repeat: no-repeat, repeat;
+        }
+    </style>
+</head>
+<body>
+<div id="game">
+    <div id="fxOverlay"></div>
+    <button id="muteToggle" class="overlay-ui" type="button">Music</button>
+    <button id="fsToggle" class="overlay-ui" type="button">Fullscreen</button>
+    <div id="hint" class="overlay-ui">Objective: Find the brass key and unlock the study door.</div>
+</div>
+
+<script src="three.min.js"></script>
+<script>
+    const container = document.getElementById('game');
+    const fxOverlay = document.getElementById('fxOverlay');
+    const muteToggle = document.getElementById('muteToggle');
+    const fsToggle = document.getElementById('fsToggle');
+    const hintEl = document.getElementById('hint');
+
+    const INPUT_INDEX = {
+        FORWARD: 4,
+        BACK: 5,
+        LEFT: 6,
+        RIGHT: 7,
+        ENTER: 8,
+        A: 8,
+    };
+
+    const DIRS = [
+        { x: 0, y: -1 },
+        { x: 1, y: 0 },
+        { x: 0, y: 1 },
+        { x: -1, y: 0 },
+    ];
+
+    const TILE = 2.2;
+    const WALL_H = 2.8;
+    const EYE_H = 1.65;
+    const BASE_MAZE_SIDE = 10;
+    const MAZE_SIDE_STEP = 2;
+    const MAX_RENDER_SIDE = 512;
+    const FORWARD_TRANSITION_MS = 1000;
+    const TURN_TRANSITION_MS = 500;
+    const BACK_TURN_TRANSITION_MS = 1000;
+    const MOVE_BOB_AMPLITUDE = 0.2;
+    const USE_CRT_ZFAST = true;
+    const GEOMETRY_DEBUG_NO_TEXTURES = false;
+    const TEXTURE_POLICY = {
+        artwork: true,
+        wallpaper: false,
+        wood: true,
+        floor: true,
+        plaster: true,
+        decals: true,
+    };
+    const GEOMETRY_PROFILE = 'full';
+    const OVERLAY_TUNING = {
+        globalOpacity: 0.75,
+        vignetteAlpha: 0.7,
+        scanlineDarkAlpha: 0.25,
+        scanlineLightAlpha: 0,
+        chromaAlpha: 0.05,
+        grainMinAlpha: 10,
+        grainAlphaRange: 15,
+    };
+
+    const STYLE_BIBLES = [
+        { name: 'Ash Manor', floor: 0x4b3a2f, ceiling: 0x2d2a29, wall: 0xc4b7a7, upperWall: 0xb6ab9d, trim: 0x5a4638, woodDark: 0x463428, accent: 0x92755f, brass: 0xc4a773, keyGlow: 0xffd98d, door: 0x5f4938, practicalLight: 0xffe0bf, ambientLight: 0xa8b8ca, decay: 0.12 },
+        { name: 'Wine And Brass', floor: 0x4b3432, ceiling: 0x2d2828, wall: 0xc7b4af, upperWall: 0xb4a09a, trim: 0x65413a, woodDark: 0x4d2f2a, accent: 0x926575, brass: 0xc9ab78, keyGlow: 0xffcc95, door: 0x5a3a35, practicalLight: 0xffdebc, ambientLight: 0xa4b3c7, decay: 0.11 },
+        { name: 'Moss Parlor', floor: 0x454236, ceiling: 0x2b2b27, wall: 0xb8bead, upperWall: 0xa3ab9b, trim: 0x55513e, woodDark: 0x403d2d, accent: 0x6d7e63, brass: 0xbca879, keyGlow: 0xdcf7a2, door: 0x56513e, practicalLight: 0xffe1c0, ambientLight: 0xa6b8c7, decay: 0.13 },
+        { name: 'Blue Gallery', floor: 0x3e424a, ceiling: 0x272a31, wall: 0xb4bcc8, upperWall: 0xa3adb9, trim: 0x495162, woodDark: 0x323b4a, accent: 0x6f85a5, brass: 0xbcaa7e, keyGlow: 0xb2e1ff, door: 0x435067, practicalLight: 0xffe2c4, ambientLight: 0xa8bcd6, decay: 0.1 },
+        { name: 'Gold Drawing Room', floor: 0x4f4232, ceiling: 0x302c25, wall: 0xd0c3a8, upperWall: 0xc2b698, trim: 0x715838, woodDark: 0x584227, accent: 0xad8a51, brass: 0xd6b56f, keyGlow: 0xffe19c, door: 0x725937, practicalLight: 0xffe4c6, ambientLight: 0xb1bfcb, decay: 0.09 },
+        { name: 'Velvet Smoke', floor: 0x473b42, ceiling: 0x2c2930, wall: 0xc0b5bf, upperWall: 0xb1a5b1, trim: 0x604f61, woodDark: 0x4a3a4a, accent: 0x8a6781, brass: 0xc9ac84, keyGlow: 0xf5c8ff, door: 0x5f4a62, practicalLight: 0xffdfc3, ambientLight: 0xa9b7d1, decay: 0.11 },
+    ];
+
+    let ARTWORKS = [];
+
+    const WAINSCOT_H = 1.04;
+    const WALLPAPER_H = 1.18;
+    const UPPER_WALL_H = WALL_H - WAINSCOT_H - WALLPAPER_H;
+    const DRESSING_SPAWN_SAFE_RADIUS = 2;
+    const HALL_CENTER_CLEARANCE = 0.5;
+
+    const state = {
+        rng: 1,
+        mazeSeed: 1,
+        mazeLevel: 1,
+        grid: [],
+        cols: BASE_MAZE_SIDE,
+        rows: BASE_MAZE_SIDE,
+        player: { x: 1, y: 1, dir: 1 },
+        objective: {
+            text: 'Find the brass key and unlock the study door.',
+            status: 'active',
+            hint: 'Explore and press ENTER near interactable objects.',
+            keyCollected: false,
+            complete: false,
+        },
+        style: STYLE_BIBLES[0],
+        styleVariant: 0,
+        styleWear: 0.22,
+        styleHash: '',
+        styleSignature: '',
+        recentStyleHashes: [],
+        interactables: new Map(),
+        doorCell: null,
+        objectiveLayout: null,
+        sceneRoot: null,
+    };
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.86;
+    renderer.shadowMap.enabled = false;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.setPixelRatio(1);
+    container.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x252932);
+    scene.fog = new THREE.Fog(0x2d323b, 18, 82);
+
+    const camera = new THREE.PerspectiveCamera(64, 1, 0.25, 60);
+    camera.rotation.order = 'YXZ';
+    camera.up.set(0, 1, 0);
+    scene.add(camera);
+
+    const cameraMotion = {
+        active: false,
+        type: '',
+        startedAt: 0,
+        durationMs: 0,
+        startX: 0,
+        startZ: 0,
+        endX: 0,
+        endZ: 0,
+        startYaw: 0,
+        endYaw: 0,
+    };
+
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.28);
+    scene.add(ambientLight);
+    const keyLight = new THREE.DirectionalLight(0xffffff, 0.38);
+    keyLight.position.set(6, 9, 4);
+    keyLight.castShadow = false;
+    keyLight.shadow.mapSize.width = 1024;
+    keyLight.shadow.mapSize.height = 1024;
+    keyLight.shadow.camera.near = 0.5;
+    keyLight.shadow.camera.far = 90;
+    keyLight.shadow.bias = -0.0003;
+    scene.add(keyLight);
+    const hemiLight = new THREE.HemisphereLight(0xc8d7ea, 0x2a2421, 0.22);
+    scene.add(hemiLight);
+
+    const crtPost = {
+        ready: false,
+        sceneTarget: null,
+        lottesTarget: null,
+        postCamera: null,
+        lottesScene: null,
+        lottesMaterial: null,
+        zfastScene: null,
+        zfastMaterial: null,
+    };
+
+    function createCrtLottesMaterial(inputTexture) {
+        return new THREE.ShaderMaterial({
+            uniforms: {
+                uSceneTex: { value: inputTexture },
+                uTextureSize: { value: new THREE.Vector2(1, 1) },
+                uInputSize: { value: new THREE.Vector2(1, 1) },
+                uOutputSize: { value: new THREE.Vector2(1, 1) },
+                uInvTextureSize: { value: new THREE.Vector2(1, 1) },
+                uHardScan: { value: -8.0 },
+                uHardPix: { value: -3.0 },
+                uWarpX: { value: 0.0 },
+                uWarpY: { value: 0.0 },
+                uMaskDark: { value: 0.5 },
+                uMaskLight: { value: 1.5 },
+                uScaleInLinearGamma: { value: 1.0 },
+                uShadowMask: { value: 0.0 },
+                uBrightBoost: { value: 1.0 },
+                uHardBloomPix: { value: -1.5 },
+                uHardBloomScan: { value: -2.0 },
+                uBloomAmount: { value: 0.18 },
+                uShape: { value: 2.0 },
+                uOpacity: { value: 1.0 },
+                uPostGain: { value: 2.4 },
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = vec4(position.xy, 0.0, 1.0);
+                }
+            `,
+            fragmentShader: `
+                precision highp float;
+                varying vec2 vUv;
+                uniform sampler2D uSceneTex;
+                uniform vec2 uTextureSize;
+                uniform vec2 uInputSize;
+                uniform vec2 uOutputSize;
+                uniform vec2 uInvTextureSize;
+                uniform float uHardScan;
+                uniform float uHardPix;
+                uniform float uWarpX;
+                uniform float uWarpY;
+                uniform float uBrightBoost;
+                uniform float uMaskDark;
+                uniform float uMaskLight;
+                uniform float uScaleInLinearGamma;
+                uniform float uShadowMask;
+                uniform float uHardBloomPix;
+                uniform float uHardBloomScan;
+                uniform float uBloomAmount;
+                uniform float uShape;
+                uniform float uOpacity;
+                uniform float uPostGain;
+
+                float toLinear1(float c) {
+                    if (uScaleInLinearGamma == 0.0) return c;
+                    return (c <= 0.04045) ? (c / 12.92) : pow((c + 0.055) / 1.055, 2.4);
+                }
+
+                vec3 toLinear(vec3 c) {
+                    if (uScaleInLinearGamma == 0.0) return c;
+                    return vec3(toLinear1(c.r), toLinear1(c.g), toLinear1(c.b));
+                }
+
+                float toSrgb1(float c) {
+                    if (uScaleInLinearGamma == 0.0) return c;
+                    return (c < 0.0031308) ? (c * 12.92) : (1.055 * pow(c, 0.41666) - 0.055);
+                }
+
+                vec3 toSrgb(vec3 c) {
+                    if (uScaleInLinearGamma == 0.0) return c;
+                    return vec3(toSrgb1(c.r), toSrgb1(c.g), toSrgb1(c.b));
+                }
+
+                vec2 dist(vec2 pos) {
+                    pos = pos * uTextureSize;
+                    return -((pos - floor(pos)) - vec2(0.5));
+                }
+
+                float gaus(float pos, float scale) {
+                    return exp2(scale * pow(abs(pos), uShape));
+                }
+
+                vec3 fetch(vec2 pos, vec2 off) {
+                    vec2 uv = (floor(pos * uTextureSize + off) + vec2(0.5)) / uTextureSize;
+                    return toLinear(uBrightBoost * texture2D(uSceneTex, uv).rgb);
+                }
+
+                vec3 horz3(vec2 pos, float off) {
+                    vec3 b = fetch(pos, vec2(-1.0, off));
+                    vec3 c = fetch(pos, vec2( 0.0, off));
+                    vec3 d = fetch(pos, vec2( 1.0, off));
+                    float dx = dist(pos).x;
+                    float wb = gaus(dx - 1.0, uHardPix);
+                    float wc = gaus(dx + 0.0, uHardPix);
+                    float wd = gaus(dx + 1.0, uHardPix);
+                    return (b * wb + c * wc + d * wd) / (wb + wc + wd);
+                }
+
+                vec3 horz5(vec2 pos, float off) {
+                    vec3 a = fetch(pos, vec2(-2.0, off));
+                    vec3 b = fetch(pos, vec2(-1.0, off));
+                    vec3 c = fetch(pos, vec2( 0.0, off));
+                    vec3 d = fetch(pos, vec2( 1.0, off));
+                    vec3 e = fetch(pos, vec2( 2.0, off));
+                    float dx = dist(pos).x;
+                    float wa = gaus(dx - 2.0, uHardPix);
+                    float wb = gaus(dx - 1.0, uHardPix);
+                    float wc = gaus(dx + 0.0, uHardPix);
+                    float wd = gaus(dx + 1.0, uHardPix);
+                    float we = gaus(dx + 2.0, uHardPix);
+                    return (a * wa + b * wb + c * wc + d * wd + e * we) / (wa + wb + wc + wd + we);
+                }
+
+                vec3 horz7(vec2 pos, float off) {
+                    vec3 a = fetch(pos, vec2(-3.0, off));
+                    vec3 b = fetch(pos, vec2(-2.0, off));
+                    vec3 c = fetch(pos, vec2(-1.0, off));
+                    vec3 d = fetch(pos, vec2( 0.0, off));
+                    vec3 e = fetch(pos, vec2( 1.0, off));
+                    vec3 f = fetch(pos, vec2( 2.0, off));
+                    vec3 g = fetch(pos, vec2( 3.0, off));
+                    float dx = dist(pos).x;
+                    float wa = gaus(dx - 3.0, uHardBloomPix);
+                    float wb = gaus(dx - 2.0, uHardBloomPix);
+                    float wc = gaus(dx - 1.0, uHardBloomPix);
+                    float wd = gaus(dx + 0.0, uHardBloomPix);
+                    float we = gaus(dx + 1.0, uHardBloomPix);
+                    float wf = gaus(dx + 2.0, uHardBloomPix);
+                    float wg = gaus(dx + 3.0, uHardBloomPix);
+                    return (a * wa + b * wb + c * wc + d * wd + e * we + f * wf + g * wg) / (wa + wb + wc + wd + we + wf + wg);
+                }
+
+                float scan(vec2 pos, float off) {
+                    return gaus(dist(pos).y + off, uHardScan);
+                }
+
+                float bloomScan(vec2 pos, float off) {
+                    return gaus(dist(pos).y + off, uHardBloomScan);
+                }
+
+                vec3 tri(vec2 pos) {
+                    vec3 a = horz3(pos, -1.0);
+                    vec3 b = horz5(pos,  0.0);
+                    vec3 c = horz3(pos,  1.0);
+                    float wa = scan(pos, -1.0);
+                    float wb = scan(pos,  0.0);
+                    float wc = scan(pos,  1.0);
+                    return a * wa + b * wb + c * wc;
+                }
+
+                vec3 bloom(vec2 pos) {
+                    vec3 a = horz5(pos, -2.0);
+                    vec3 b = horz7(pos, -1.0);
+                    vec3 c = horz7(pos,  0.0);
+                    vec3 d = horz7(pos,  1.0);
+                    vec3 e = horz5(pos,  2.0);
+                    float wa = bloomScan(pos, -2.0);
+                    float wb = bloomScan(pos, -1.0);
+                    float wc = bloomScan(pos,  0.0);
+                    float wd = bloomScan(pos,  1.0);
+                    float we = bloomScan(pos,  2.0);
+                    return a * wa + b * wb + c * wc + d * wd + e * we;
+                }
+
+                vec2 warp(vec2 pos) {
+                    pos = pos * 2.0 - 1.0;
+                    pos *= vec2(1.0 + (pos.y * pos.y) * uWarpX, 1.0 + (pos.x * pos.x) * uWarpY);
+                    return pos * 0.5 + 0.5;
+                }
+
+                vec3 mask(vec2 pos) {
+                    vec3 m = vec3(uMaskDark);
+
+                    if (uShadowMask == 1.0) {
+                        float line = uMaskLight;
+                        float odd = 0.0;
+                        if (fract(pos.x * 0.166666666) < 0.5) odd = 1.0;
+                        if (fract((pos.y + odd) * 0.5) < 0.5) line = uMaskDark;
+                        pos.x = fract(pos.x * 0.333333333);
+                        if (pos.x < 0.333) m.r = uMaskLight;
+                        else if (pos.x < 0.666) m.g = uMaskLight;
+                        else m.b = uMaskLight;
+                        m *= line;
+                    } else if (uShadowMask == 2.0) {
+                        pos.x = fract(pos.x * 0.333333333);
+                        if (pos.x < 0.333) m.r = uMaskLight;
+                        else if (pos.x < 0.666) m.g = uMaskLight;
+                        else m.b = uMaskLight;
+                    } else if (uShadowMask == 3.0) {
+                        pos.x += pos.y * 3.0;
+                        pos.x = fract(pos.x * 0.166666666);
+                        if (pos.x < 0.333) m.r = uMaskLight;
+                        else if (pos.x < 0.666) m.g = uMaskLight;
+                        else m.b = uMaskLight;
+                    } else if (uShadowMask == 4.0) {
+                        pos = floor(pos * vec2(1.0, 0.5));
+                        pos.x += pos.y * 3.0;
+                        pos.x = fract(pos.x * 0.166666666);
+                        if (pos.x < 0.333) m.r = uMaskLight;
+                        else if (pos.x < 0.666) m.g = uMaskLight;
+                        else m.b = uMaskLight;
+                    }
+
+                    return m;
+                }
+
+                void main() {
+                    vec3 original = texture2D(uSceneTex, vUv).rgb;
+
+                    vec2 pos = warp(vUv * (uTextureSize / uInputSize)) * (uInputSize / uTextureSize);
+                    vec3 outColor = tri(pos);
+                    outColor += bloom(pos) * uBloomAmount;
+                    if (uShadowMask > 0.0) {
+                        outColor *= mask(gl_FragCoord.xy * 1.000001);
+                    }
+
+                    if (pos.x <= 0.0001 || pos.x >= 0.9999 || pos.y <= 0.0001 || pos.y >= 0.9999) {
+                        outColor = vec3(0.0);
+                    }
+
+                    vec3 crtColor = toSrgb(outColor) * max(0.0, uPostGain);
+                    gl_FragColor = vec4(mix(original, crtColor, clamp(uOpacity, 0.0, 1.0)), 1.0);
+                }
+            `,
+            depthWrite: false,
+            depthTest: false,
+            toneMapped: false,
+        });
+    }
+
+    function createCrtZfastOverlayMaterial(inputTexture) {
+        return new THREE.ShaderMaterial({
+            uniforms: {
+                uSceneTex: { value: inputTexture },
+                uTextureSize: { value: new THREE.Vector2(1, 1) },
+                uInvTextureSize: { value: new THREE.Vector2(1, 1) },
+                uBlurScaleX: { value: 0.30 },
+                uLowLumScan: { value: 6.0 },
+                uHiLumScan: { value: 8.0 },
+                uScanOpacity: { value: 1.0 },
+                uScanlineStrength: { value: 0.15 },
+                uColorSteps: { value: 48.0 },
+                uDitherStrength: { value: 0.35 },
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = vec4(position.xy, 0.0, 1.0);
+                }
+            `,
+            fragmentShader: `
+                precision highp float;
+                varying vec2 vUv;
+                uniform sampler2D uSceneTex;
+                uniform vec2 uTextureSize;
+                uniform vec2 uInvTextureSize;
+                uniform float uBlurScaleX;
+                uniform float uLowLumScan;
+                uniform float uHiLumScan;
+                uniform float uScanOpacity;
+                uniform float uScanlineStrength;
+                uniform float uColorSteps;
+                uniform float uDitherStrength;
+
+                float bayer4(vec2 p) {
+                    vec2 f = mod(floor(p), 4.0);
+                    if (f.y < 0.5) {
+                        if (f.x < 0.5) return 0.0 / 16.0;
+                        if (f.x < 1.5) return 8.0 / 16.0;
+                        if (f.x < 2.5) return 2.0 / 16.0;
+                        return 10.0 / 16.0;
+                    }
+                    if (f.y < 1.5) {
+                        if (f.x < 0.5) return 12.0 / 16.0;
+                        if (f.x < 1.5) return 4.0 / 16.0;
+                        if (f.x < 2.5) return 14.0 / 16.0;
+                        return 6.0 / 16.0;
+                    }
+                    if (f.y < 2.5) {
+                        if (f.x < 0.5) return 3.0 / 16.0;
+                        if (f.x < 1.5) return 11.0 / 16.0;
+                        if (f.x < 2.5) return 1.0 / 16.0;
+                        return 9.0 / 16.0;
+                    }
+                    if (f.x < 0.5) return 15.0 / 16.0;
+                    if (f.x < 1.5) return 7.0 / 16.0;
+                    if (f.x < 2.5) return 13.0 / 16.0;
+                    return 5.0 / 16.0;
+                }
+
+                void main() {
+                    vec2 p = vUv * uTextureSize;
+                    vec2 i = floor(p) + 0.50;
+                    vec2 f = p - i;
+                    p = (i + 4.0 * f * f * f) * uInvTextureSize;
+                    p.x = mix(p.x, vUv.x, uBlurScaleX);
+
+                    float yTerm = f.y * f.y;
+                    float yyTerm = yTerm * yTerm;
+                    vec3 original = texture2D(uSceneTex, vUv).rgb;
+                    vec3 color = texture2D(uSceneTex, p).rgb;
+
+                    float scanLineWeight = 1.25 - uLowLumScan * (yTerm - 2.05 * yyTerm);
+                    float scanLineWeightB = 1.0 - uHiLumScan * (yyTerm - 2.8 * yyTerm * yTerm);
+                    float weightLuma = dot(color, vec3(0.26664));
+                    float finalWeight = mix(scanLineWeight, scanLineWeightB, weightLuma);
+                    vec3 zfastScan = color * finalWeight;
+
+                    float lineBand = mod(floor(gl_FragCoord.y), 2.0);
+                    float hardScanMask = (lineBand < 1.0) ? (1.0 - clamp(uScanlineStrength, 0.0, 0.95)) : 1.0;
+                    zfastScan *= hardScanMask;
+
+                    float steps = max(2.0, uColorSteps);
+                    float d = (bayer4(gl_FragCoord.xy) - 0.5) * (uDitherStrength / steps);
+                    zfastScan = floor((zfastScan + d) * steps) / steps;
+
+                    gl_FragColor = vec4(mix(original, zfastScan, clamp(uScanOpacity, 0.0, 1.0)), 1.0);
+                }
+            `,
+            depthWrite: false,
+            depthTest: false,
+            toneMapped: false,
+        });
+    }
+
+    function initCrtPost() {
+        if (!USE_CRT_ZFAST) return;
+        try {
+            const sceneTarget = new THREE.WebGLRenderTarget(1, 1, {
+                magFilter: THREE.LinearFilter,
+                minFilter: THREE.LinearFilter,
+                depthBuffer: true,
+                stencilBuffer: false,
+            });
+            sceneTarget.texture.colorSpace = THREE.SRGBColorSpace;
+
+            const lottesTarget = new THREE.WebGLRenderTarget(1, 1, {
+                magFilter: THREE.LinearFilter,
+                minFilter: THREE.LinearFilter,
+                depthBuffer: false,
+                stencilBuffer: false,
+            });
+            lottesTarget.texture.colorSpace = THREE.SRGBColorSpace;
+
+            const postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 2);
+            postCamera.position.z = 1;
+
+            const lottesScene = new THREE.Scene();
+            const lottesMaterial = createCrtLottesMaterial(sceneTarget.texture);
+            const lottesQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), lottesMaterial);
+            lottesQuad.frustumCulled = false;
+            lottesScene.add(lottesQuad);
+
+            const zfastScene = new THREE.Scene();
+            const zfastMaterial = createCrtZfastOverlayMaterial(lottesTarget.texture);
+            const zfastQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), zfastMaterial);
+            zfastQuad.frustumCulled = false;
+            zfastScene.add(zfastQuad);
+
+            crtPost.sceneTarget = sceneTarget;
+            crtPost.lottesTarget = lottesTarget;
+            crtPost.postCamera = postCamera;
+            crtPost.lottesScene = lottesScene;
+            crtPost.lottesMaterial = lottesMaterial;
+            crtPost.zfastScene = zfastScene;
+            crtPost.zfastMaterial = zfastMaterial;
+            crtPost.ready = true;
+        } catch (error) {
+            crtPost.ready = false;
+            console.warn('CRT Lottes init failed; using direct renderer path.', error);
+        }
+    }
+
+    const audioState = {
+        unlocked: false,
+        userEnabled: true,
+        bgmAudio: null,
+        bgmOrder: [],
+        bgmIndex: 0,
+        bgmVolume: 0.72,
+        bgmMuted: false,
+        sfxVolume: 1,
+        sfx: {
+            footsteps: [
+                'audio/sfx/footsteps-loop-a.mp3',
+                'audio/sfx/footsteps-loop-b.mp3',
+                'audio/sfx/footsteps-loop-c.mp3',
+            ],
+            key: ['audio/sfx/key-pickup.mp3'],
+            door: ['audio/sfx/door-open.mp3'],
+        },
+        bgmTracks: [],
+    };
+
+    function shuffleArray(items) {
+        const arr = items.slice();
+        for (let i = arr.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            const t = arr[i];
+            arr[i] = arr[j];
+            arr[j] = t;
+        }
+        return arr;
+    }
+
+    function createAudio(path) {
+        const audio = new Audio(path);
+        audio.preload = 'auto';
+        return audio;
+    }
+
+    function ensureAudio() {
+        if (!audioState.bgmTracks.length) {
+            audioState.bgmOrder = [];
+            audioState.bgmAudio = null;
+            return true;
+        }
+        if (!audioState.bgmOrder.length) {
+            audioState.bgmOrder = shuffleArray(audioState.bgmTracks);
+            audioState.bgmIndex = 0;
+        }
+        if (!audioState.bgmAudio && audioState.bgmOrder.length) {
+            const src = audioState.bgmOrder[audioState.bgmIndex % audioState.bgmOrder.length];
+            audioState.bgmAudio = createAudio(src);
+            audioState.bgmAudio.loop = false;
+            audioState.bgmAudio.volume = 0;
+            audioState.bgmAudio.addEventListener('ended', () => {
+                if (!audioState.unlocked) return;
+                playNextBgmTrack();
+            });
+        }
+        return true;
+    }
+
+    async function tryUnlockAudio() {
+        if (audioState.unlocked) return true;
+        if (!audioState.userEnabled) return false;
+        if (!ensureAudio()) return false;
+        try {
+            const bgm = audioState.bgmAudio;
+            if (bgm) {
+                bgm.volume = 0;
+                await bgm.play();
+                bgm.pause();
+                bgm.currentTime = 0;
+            }
+
+            const primer = createAudio(audioState.sfx.footsteps[0]);
+            primer.volume = 0;
+            await primer.play();
+            primer.pause();
+
+            audioState.unlocked = true;
+            startMusicLoop();
+            return true;
+        } catch {
+            audioState.unlocked = false;
+            return false;
+        }
+    }
+
+    function fadeTo(audio, target, durationMs) {
+        if (!audio) return;
+        const steps = Math.max(1, Math.floor(durationMs / 60));
+        const start = audio.volume;
+        const delta = (target - start) / steps;
+        let n = 0;
+        const timer = setInterval(() => {
+            n += 1;
+            audio.volume = Math.max(0, Math.min(1, start + delta * n));
+            if (n >= steps) {
+                clearInterval(timer);
+                audio.volume = target;
+            }
+        }, 60);
+    }
+
+    function playNextBgmTrack() {
+        if (!audioState.unlocked || !audioState.bgmOrder.length) return;
+        audioState.bgmIndex = (audioState.bgmIndex + 1) % audioState.bgmOrder.length;
+        const src = audioState.bgmOrder[audioState.bgmIndex];
+        if (!audioState.bgmAudio) {
+            audioState.bgmAudio = createAudio(src);
+        }
+        const bgm = audioState.bgmAudio;
+        bgm.src = src;
+        bgm.currentTime = 0;
+        bgm.volume = 0;
+        const p = bgm.play();
+        if (p && typeof p.then === 'function') {
+            p.then(() => {
+                const target = audioState.bgmMuted ? 0 : Math.min(1, audioState.bgmVolume);
+                fadeTo(bgm, target, 1600);
+            }).catch(() => {});
+        }
+    }
+
+    function markAudioEnabled() {
+        audioState.userEnabled = true;
+    }
+
+    function playTransientClip(src, volume = 1, maxMs = 900, rate = 1) {
+        if (!audioState.unlocked) return;
+        const clip = createAudio(src);
+        clip.volume = Math.max(0, Math.min(1, volume * audioState.sfxVolume));
+        clip.playbackRate = rate;
+        const p = clip.play();
+        if (p && typeof p.then === 'function') {
+            p.catch(() => {});
+        }
+        setTimeout(() => {
+            clip.pause();
+            clip.currentTime = 0;
+        }, maxMs);
+    }
+
+    function playFootstep() {
+        if (!audioState.unlocked) return;
+        const list = audioState.sfx.footsteps;
+        const src = list[Math.floor(Math.random() * list.length)];
+        const rate = 0.94 + Math.random() * 0.16;
+        playTransientClip(src, 0.95, 920, rate);
+    }
+
+    function playKeyPickup() {
+        if (!audioState.unlocked) return;
+        playTransientClip(audioState.sfx.key[0], 1, 1200, 1);
+    }
+
+    function playDoorOpen() {
+        if (!audioState.unlocked) return;
+        playTransientClip(audioState.sfx.door[0], 0.92, 2400, 1);
+    }
+
+    function startMusicLoop() {
+        if (!audioState.unlocked) return;
+        ensureAudio();
+        const bgm = audioState.bgmAudio;
+        if (!bgm || !audioState.bgmOrder.length) return;
+        if (!bgm.paused && !bgm.ended) return;
+        bgm.src = audioState.bgmOrder[audioState.bgmIndex % audioState.bgmOrder.length];
+        bgm.currentTime = 0;
+        bgm.volume = 0;
+        const p = bgm.play();
+        if (p && typeof p.then === 'function') {
+            p.then(() => {
+                const target = audioState.bgmMuted ? 0 : Math.min(1, audioState.bgmVolume);
+                fadeTo(bgm, target, 2000);
+            }).catch(() => {});
+        }
+    }
+
+    function applyBgmMuteState() {
+        const bgm = audioState.bgmAudio;
+        if (!bgm) return;
+        bgm.volume = audioState.bgmMuted ? 0 : Math.min(1, audioState.bgmVolume);
+    }
+
+    function updateMuteButton() {
+        if (!audioState.bgmTracks.length) {
+            muteToggle.textContent = 'No Music';
+            muteToggle.disabled = true;
+            return;
+        }
+        muteToggle.disabled = false;
+        muteToggle.textContent = audioState.bgmMuted ? 'Music Off' : 'Music On';
+    }
+
+    function updateSceneLighting() {
+        ambientLight.color.setHex(state.style.ambientLight || 0x8d98a7);
+        ambientLight.intensity = 0.75;
+        keyLight.color.setHex(state.style.practicalLight || 0xffdab4);
+        keyLight.intensity = 1.425;
+        hemiLight.intensity = 0.42;
+        scene.fog.color.setHex(0x3a3633);
+        scene.fog.near = 24;
+        scene.fog.far = 98;
+    }
+
+    function setShadowFlags(mesh, cast, receive) {
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
+        return mesh;
+    }
+
+    class Interactable {
+        constructor({ id, type, x, y, faceDir = null, state = 'active', requires = null, telegraph = null, onInteract = null }) {
+            this.id = id;
+            this.type = type;
+            this.x = x;
+            this.y = y;
+            this.faceDir = Number.isInteger(faceDir) ? ((faceDir % 4) + 4) % 4 : null;
+            this.state = state;
+            this.requires = requires;
+            this.telegraph = telegraph;
+            this.onInteract = onInteract;
+        }
+
+        canInteract(game) {
+            if (this.state !== 'active') return false;
+            if (!this.requires) return true;
+            if (this.requires === 'key') return game.objective.keyCollected;
+            return true;
+        }
+
+        interact(game) {
+            if (!this.canInteract(game)) return false;
+            if (typeof this.onInteract === 'function') {
+                this.onInteract(game, this);
+                return true;
+            }
+            return false;
+        }
+    }
+
+    function reseed(seed) {
+        const n = (Number(seed) >>> 0) || 1;
+        state.rng = n;
+        state.mazeSeed = n;
+    }
+
+    function randInt(max) {
+        state.rng = (1664525 * state.rng + 1013904223) >>> 0;
+        return state.rng % max;
+    }
+
+    function hash32(a, b, c, d) {
+        let x = (Math.imul(a ^ 0x9e3779b9, 2246822519) + Math.imul(b ^ 0x85ebca6b, 3266489917) + Math.imul(c ^ 0xc2b2ae35, 668265263) + (d >>> 0)) >>> 0;
+        x ^= x >>> 16;
+        x = Math.imul(x, 2246822519) >>> 0;
+        x ^= x >>> 13;
+        x = Math.imul(x, 3266489917) >>> 0;
+        x ^= x >>> 16;
+        return x >>> 0;
+    }
+
+    const wallpaperCache = new Map();
+    const woodCache = new Map();
+    const plasterCache = new Map();
+    const wallpaperNormalCache = new Map();
+    const wallpaperRoughnessCache = new Map();
+    const woodNormalCache = new Map();
+    const woodRoughnessCache = new Map();
+    const plasterNormalCache = new Map();
+    const plasterRoughnessCache = new Map();
+    const floorAlbedoCache = new Map();
+    const floorNormalCache = new Map();
+    const floorRoughnessCache = new Map();
+    const decalCache = new Map();
+    const artTextureCache = new Map();
+    let glowSpriteTexture = null;
+    const textureLoader = new THREE.TextureLoader();
+
+    function getGlowSpriteTexture() {
+        if (glowSpriteTexture) return glowSpriteTexture;
+        const canvas = document.createElement('canvas');
+        canvas.width = 128;
+        canvas.height = 128;
+        const ctx = canvas.getContext('2d', { alpha: true });
+        const grad = ctx.createRadialGradient(64, 64, 8, 64, 64, 64);
+        grad.addColorStop(0, 'rgba(255,255,255,0.95)');
+        grad.addColorStop(0.22, 'rgba(255,255,255,0.55)');
+        grad.addColorStop(0.58, 'rgba(255,255,255,0.16)');
+        grad.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.clearRect(0, 0, 128, 128);
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 128, 128);
+
+        glowSpriteTexture = new THREE.CanvasTexture(canvas);
+        glowSpriteTexture.colorSpace = THREE.SRGBColorSpace;
+        glowSpriteTexture.minFilter = THREE.LinearFilter;
+        glowSpriteTexture.magFilter = THREE.LinearFilter;
+        glowSpriteTexture.generateMipmaps = false;
+        glowSpriteTexture.wrapS = THREE.ClampToEdgeWrapping;
+        glowSpriteTexture.wrapT = THREE.ClampToEdgeWrapping;
+        return glowSpriteTexture;
+    }
+
+    function resolveAssetUrl(path) {
+        try {
+            return new URL(path, window.location.href).toString();
+        } catch {
+            return path;
+        }
+    }
+
+    function getArtworkTexture(file) {
+        if (!TEXTURE_POLICY.artwork) return null;
+        const url = resolveAssetUrl(file);
+        if (artTextureCache.has(url)) return artTextureCache.get(url);
+
+        const tex = textureLoader.load(url, undefined, undefined, () => {
+            console.warn('MazeGame artwork failed to load:', url);
+        });
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.wrapS = THREE.ClampToEdgeWrapping;
+        tex.wrapT = THREE.ClampToEdgeWrapping;
+        tex.generateMipmaps = true;
+        tex.minFilter = THREE.LinearMipmapLinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        artTextureCache.set(url, tex);
+        return tex;
+    }
+
+    function shuffledArtworkList() {
+        const list = ARTWORKS.slice();
+        for (let i = list.length - 1; i > 0; i--) {
+            const j = hash32(state.mazeSeed, state.styleVariant, i, 9917) % (i + 1);
+            const tmp = list[i];
+            list[i] = list[j];
+            list[j] = tmp;
+        }
+        return list;
+    }
+
+    async function loadJsonFileList(manifestPath) {
+        try {
+            const manifestUrl = resolveAssetUrl(manifestPath);
+            const res = await fetch(manifestUrl, { cache: 'no-store' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            if (Array.isArray(data)) return data.map(x => String(x || '')).filter(Boolean);
+            return Array.isArray(data?.files) ? data.files.map(x => String(x || '')).filter(Boolean) : [];
+        } catch {
+            return [];
+        }
+    }
+
+    async function loadCustomArtworks() {
+        const files = await loadJsonFileList('art/custom/index.json');
+        ARTWORKS = files.map((file, i) => ({ id: `custom-${i}`, file }));
+    }
+
+    async function loadCustomBgmTracks() {
+        const files = await loadJsonFileList('audio/custom-bgm/index.json');
+        audioState.bgmTracks = files;
+        audioState.bgmOrder = [];
+        if (audioState.bgmAudio) {
+            audioState.bgmAudio.pause();
+            audioState.bgmAudio = null;
+        }
+    }
+
+    function hexToRgb(hex) {
+        return {
+            r: (hex >> 16) & 255,
+            g: (hex >> 8) & 255,
+            b: hex & 255,
+        };
+    }
+
+    function shadeHex(hex, amount) {
+        const c = hexToRgb(hex);
+        const r = Math.max(0, Math.min(255, c.r + amount));
+        const g = Math.max(0, Math.min(255, c.g + amount));
+        const b = Math.max(0, Math.min(255, c.b + amount));
+        return `rgb(${r}, ${g}, ${b})`;
+    }
+
+    function colorIntFromRgb(r, g, b) {
+        return ((r & 255) << 16) | ((g & 255) << 8) | (b & 255);
+    }
+
+    function clampByte(n) {
+        return Math.max(0, Math.min(255, n | 0));
+    }
+
+    function jitterColor(hex, seedA, seedB, range = 10) {
+        const c = hexToRgb(hex);
+        const h = hash32(seedA, seedB, state.mazeSeed, state.styleVariant * 97);
+        const d1 = (((h & 255) / 255) * 2 - 1) * range;
+        const d2 = ((((h >>> 8) & 255) / 255) * 2 - 1) * range;
+        const d3 = ((((h >>> 16) & 255) / 255) * 2 - 1) * range;
+        return colorIntFromRgb(clampByte(c.r + d1), clampByte(c.g + d2), clampByte(c.b + d3));
+    }
+
+    function blendHex(hexA, hexB, t) {
+        const a = hexToRgb(hexA);
+        const b = hexToRgb(hexB);
+        const k = Math.max(0, Math.min(1, Number(t) || 0));
+        const r = clampByte(a.r + (b.r - a.r) * k);
+        const g = clampByte(a.g + (b.g - a.g) * k);
+        const bl = clampByte(a.b + (b.b - a.b) * k);
+        return colorIntFromRgb(r, g, bl);
+    }
+
+    function liftMinLuma(hex, floor = 48) {
+        const c = hexToRgb(hex);
+        const m = Math.max(c.r, c.g, c.b);
+        if (m >= floor) return hex;
+        const add = floor - m;
+        return colorIntFromRgb(clampByte(c.r + add), clampByte(c.g + add), clampByte(c.b + add));
+    }
+
+    function applyStyleColorVariation(base, variantSeed, wearSeed) {
+        const shift = (wearSeed - 1.5) * 3;
+        return {
+            ...base,
+            wall: jitterColor(base.wall, variantSeed + 11, wearSeed + 31, 9),
+            upperWall: jitterColor(base.upperWall, variantSeed + 23, wearSeed + 41, 8),
+            trim: jitterColor(base.trim, variantSeed + 37, wearSeed + 53, 7),
+            woodDark: jitterColor(base.woodDark, variantSeed + 47, wearSeed + 67, 7),
+            accent: jitterColor(base.accent, variantSeed + 61, wearSeed + 79, 13),
+            floor: jitterColor(base.floor, variantSeed + 71, wearSeed + 83, 6),
+            ceiling: jitterColor(base.ceiling, variantSeed + 89, wearSeed + 97, 4),
+            brass: jitterColor(base.brass, variantSeed + 101, wearSeed + 109, 8),
+            practicalLight: blendHex(base.practicalLight, 0xffffff, 0.06 + shift * 0.005),
+            ambientLight: blendHex(base.ambientLight, 0xb8c8da, 0.08 + shift * 0.004),
+            door: jitterColor(base.door, variantSeed + 113, wearSeed + 127, 8),
+            keyGlow: jitterColor(base.keyGlow, variantSeed + 131, wearSeed + 149, 10),
+        };
+    }
+
+    function makeCanvasTexture(draw, w = 256, h = 256) {
+        const c = document.createElement('canvas');
+        c.width = w;
+        c.height = h;
+        const g = c.getContext('2d');
+        draw(g, w, h);
+        const tex = new THREE.CanvasTexture(c);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.RepeatWrapping;
+        return tex;
+    }
+
+    function makeLinearCanvasTexture(draw, w = 256, h = 256) {
+        const c = document.createElement('canvas');
+        c.width = w;
+        c.height = h;
+        const g = c.getContext('2d');
+        draw(g, w, h);
+        const tex = new THREE.CanvasTexture(c);
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.RepeatWrapping;
+        return tex;
+    }
+
+    function getZoneId(x, y) {
+        const zx = Math.floor(x / 4);
+        const zy = Math.floor(y / 4);
+        return `${zx}:${zy}`;
+    }
+
+    function getWallpaperTexture(style, family, variant, orientTag, zoneVariant) {
+        if (!TEXTURE_POLICY.wallpaper) return null;
+        const key = `${style.name}-${family}-${variant}-${orientTag}-${zoneVariant}`;
+        if (wallpaperCache.has(key)) return wallpaperCache.get(key);
+
+        const tex = makeCanvasTexture((g, w, h) => {
+            g.fillStyle = shadeHex(style.wall, 8 + zoneVariant * 3);
+            g.fillRect(0, 0, w, h);
+
+            const dark = shadeHex(style.wall, -16);
+            const light = shadeHex(style.wall, 24);
+            const accent = shadeHex(style.accent, -5);
+            const trimTone = shadeHex(style.trim, 2);
+
+            if (family === 0) { // faded damask medallions
+                g.fillStyle = light;
+                for (let y = 16; y < h; y += 32) {
+                    for (let x = 16; x < w; x += 32) {
+                        const r = 3 + ((x + y + variant) % 3);
+                        g.beginPath();
+                        g.arc(x, y, r, 0, Math.PI * 2);
+                        g.fill();
+                        g.beginPath();
+                        g.arc(x, y, r + 4, 0, Math.PI * 2);
+                        g.strokeStyle = accent;
+                        g.lineWidth = 1;
+                        g.stroke();
+                    }
+                }
+            } else if (family === 1) { // fleur vines
+                g.strokeStyle = dark;
+                g.lineWidth = 2;
+                for (let y = 10; y < h; y += 28) {
+                    for (let x = 12; x < w; x += 24) {
+                        g.beginPath();
+                        g.arc(x, y, 6, 0, Math.PI);
+                        g.stroke();
+                        g.beginPath();
+                        g.arc(x + 12, y + 14, 6, Math.PI, Math.PI * 2);
+                        g.stroke();
+                        g.beginPath();
+                        g.moveTo(x + 6, y + 4);
+                        g.lineTo(x + 12, y + 12);
+                        g.stroke();
+                    }
+                }
+            } else if (family === 2) { // flocked stripes
+                for (let i = 0; i < w; i += 18) {
+                    g.fillStyle = i % 36 === 0 ? light : dark;
+                    g.fillRect(i, 0, 8, h);
+                    g.fillStyle = accent;
+                    g.globalAlpha = 0.24;
+                    g.fillRect(i + 8, 0, 2, h);
+                    g.globalAlpha = 1;
+                }
+            } else if (family === 3) { // brocade diamonds
+                g.strokeStyle = accent;
+                g.lineWidth = 1.5;
+                for (let y = 16; y < h; y += 22) {
+                    for (let x = 16; x < w; x += 22) {
+                        g.beginPath();
+                        g.moveTo(x, y - 6);
+                        g.lineTo(x + 6, y);
+                        g.lineTo(x, y + 6);
+                        g.lineTo(x - 6, y);
+                        g.closePath();
+                        g.stroke();
+                    }
+                }
+            } else if (family === 4) { // embossed rosettes
+                g.strokeStyle = trimTone;
+                g.lineWidth = 1.5;
+                for (let y = 18; y < h; y += 28) {
+                    for (let x = 18; x < w; x += 28) {
+                        g.beginPath();
+                        g.arc(x, y, 8, 0, Math.PI * 2);
+                        g.stroke();
+                        g.beginPath();
+                        g.arc(x, y, 3, 0, Math.PI * 2);
+                        g.stroke();
+                    }
+                }
+            } else { // fan lattice
+                g.strokeStyle = light;
+                g.lineWidth = 1.5;
+                for (let x = -h; x < w; x += 22) {
+                    g.beginPath();
+                    g.moveTo(x, 0);
+                    g.lineTo(x + h, h);
+                    g.stroke();
+                    g.beginPath();
+                    g.moveTo(x + h * 0.84, 0);
+                    g.lineTo(x + h * 0.18, h);
+                    g.stroke();
+                }
+            }
+
+            const grime = g.createLinearGradient(0, 0, 0, h);
+            grime.addColorStop(0, 'rgba(255,255,255,0)');
+            grime.addColorStop(0.66, 'rgba(0,0,0,0.02)');
+            grime.addColorStop(1, 'rgba(0,0,0,0.08)');
+            g.fillStyle = grime;
+            g.fillRect(0, 0, w, h);
+
+            const decay = Math.max(0.06, Math.min(0.2, (style.decay || 0.11) + (state.styleWear || 0.1) * 0.6));
+            g.globalAlpha = decay * 0.55;
+            g.fillStyle = '#000';
+            for (let i = 0; i < 420; i++) {
+                const x = (i * 73 + variant * 17 + zoneVariant * 11) % w;
+                const y = (i * 37 + variant * 29 + zoneVariant * 19) % h;
+                g.fillRect(x, y, 1, 1);
+            }
+            g.globalAlpha = decay * 0.3;
+            for (let i = 0; i < 18; i++) {
+                const y = (i * 31 + variant * 27 + zoneVariant * 13) % h;
+                g.fillRect(0, y, w, 1);
+            }
+            g.globalAlpha = 1;
+        });
+
+        const rot = ((variant + orientTag) % 4) * (Math.PI / 2);
+        tex.center.set(0.5, 0.5);
+        tex.rotation = rot;
+        tex.repeat.set(1.2, 1.2);
+        wallpaperCache.set(key, tex);
+        return tex;
+    }
+
+    function getWallpaperNormalTexture(style, family, variant, orientTag, zoneVariant) {
+        if (!TEXTURE_POLICY.wallpaper) return null;
+        const key = `${style.name}-${family}-${variant}-${orientTag}-${zoneVariant}`;
+        if (wallpaperNormalCache.has(key)) return wallpaperNormalCache.get(key);
+        const tex = makeLinearCanvasTexture((g, w, h) => {
+            g.fillStyle = 'rgb(128,128,255)';
+            g.fillRect(0, 0, w, h);
+            g.globalAlpha = 0.2;
+            for (let i = 0; i < 180; i++) {
+                const x = (i * 17 + variant * 13 + zoneVariant * 19) % w;
+                const y = (i * 31 + family * 23 + orientTag * 11) % h;
+                g.fillStyle = i % 2 ? 'rgb(136,120,255)' : 'rgb(120,136,255)';
+                g.fillRect(x, y, 2, 1);
+            }
+            g.globalAlpha = 1;
+        }, 128, 128);
+        tex.repeat.set(1.2, 1.2);
+        wallpaperNormalCache.set(key, tex);
+        return tex;
+    }
+
+    function getWallpaperRoughnessTexture(style, family, variant, orientTag, zoneVariant) {
+        if (!TEXTURE_POLICY.wallpaper) return null;
+        const key = `${style.name}-${family}-${variant}-${orientTag}-${zoneVariant}`;
+        if (wallpaperRoughnessCache.has(key)) return wallpaperRoughnessCache.get(key);
+        const tex = makeLinearCanvasTexture((g, w, h) => {
+            g.fillStyle = 'rgb(186,186,186)';
+            g.fillRect(0, 0, w, h);
+            g.globalAlpha = 0.45;
+            for (let i = 0; i < 220; i++) {
+                const x = (i * 19 + family * 37) % w;
+                const y = (i * 29 + variant * 17 + zoneVariant * 7) % h;
+                const s = 1 + (i % 2);
+                g.fillStyle = i % 3 ? 'rgb(160,160,160)' : 'rgb(210,210,210)';
+                g.fillRect(x, y, s, s);
+            }
+            g.globalAlpha = 1;
+        }, 128, 128);
+        tex.repeat.set(1.2, 1.2);
+        wallpaperRoughnessCache.set(key, tex);
+        return tex;
+    }
+
+    function getWoodTexture(style, variant, axisTag) {
+        if (!TEXTURE_POLICY.wood) return null;
+        const key = `${style.name}-${variant}-${axisTag}`;
+        if (woodCache.has(key)) return woodCache.get(key);
+        const tex = makeCanvasTexture((g, w, h) => {
+            g.fillStyle = shadeHex(style.trim, -10);
+            g.fillRect(0, 0, w, h);
+            const grain = shadeHex(style.woodDark, 14);
+            g.strokeStyle = grain;
+            g.globalAlpha = 0.5;
+            for (let i = 0; i < 140; i++) {
+                const y = (i * 11 + variant * 23 + axisTag * 17) % h;
+                const wav = 4 + ((i + variant) % 8);
+                g.beginPath();
+                g.moveTo(0, y);
+                g.bezierCurveTo(w * 0.25, y + wav, w * 0.7, y - wav, w, y + (wav / 2));
+                g.stroke();
+            }
+            g.globalAlpha = 0.2;
+            g.fillStyle = '#000';
+            for (let i = 0; i < 240; i++) {
+                g.fillRect((i * 23 + variant * 41) % w, (i * 59 + variant * 7) % h, 1, 1);
+            }
+            g.globalAlpha = 1;
+        }, 256, 128);
+        tex.repeat.set(2.2, 1.1);
+        woodCache.set(key, tex);
+        return tex;
+    }
+
+    function getWoodNormalTexture(style, variant, axisTag) {
+        if (!TEXTURE_POLICY.wood) return null;
+        const key = `${style.name}-${variant}-${axisTag}`;
+        if (woodNormalCache.has(key)) return woodNormalCache.get(key);
+        const tex = makeLinearCanvasTexture((g, w, h) => {
+            g.fillStyle = 'rgb(128,128,255)';
+            g.fillRect(0, 0, w, h);
+            g.globalAlpha = 0.28;
+            for (let i = 0; i < 140; i++) {
+                const y = (i * 9 + variant * 21 + axisTag * 13) % h;
+                g.strokeStyle = i % 2 ? 'rgb(136,120,255)' : 'rgb(120,136,255)';
+                g.beginPath();
+                g.moveTo(0, y);
+                g.bezierCurveTo(w * 0.3, y + 3, w * 0.75, y - 3, w, y + 2);
+                g.stroke();
+            }
+            g.globalAlpha = 1;
+        }, 128, 128);
+        tex.repeat.set(2.2, 1.1);
+        woodNormalCache.set(key, tex);
+        return tex;
+    }
+
+    function getWoodRoughnessTexture(style, variant, axisTag) {
+        if (!TEXTURE_POLICY.wood) return null;
+        const key = `${style.name}-${variant}-${axisTag}`;
+        if (woodRoughnessCache.has(key)) return woodRoughnessCache.get(key);
+        const tex = makeLinearCanvasTexture((g, w, h) => {
+            g.fillStyle = 'rgb(150,150,150)';
+            g.fillRect(0, 0, w, h);
+            g.globalAlpha = 0.33;
+            for (let i = 0; i < 180; i++) {
+                const y = (i * 7 + variant * 19) % h;
+                g.fillStyle = i % 3 ? 'rgb(175,175,175)' : 'rgb(128,128,128)';
+                g.fillRect(0, y, w, 1);
+            }
+            g.globalAlpha = 1;
+        }, 128, 128);
+        tex.repeat.set(2.2, 1.1);
+        woodRoughnessCache.set(key, tex);
+        return tex;
+    }
+
+    function getPlasterTexture(style, variant) {
+        if (!TEXTURE_POLICY.plaster) return null;
+        const key = `${style.name}-${variant}`;
+        if (plasterCache.has(key)) return plasterCache.get(key);
+        const tex = makeCanvasTexture((g, w, h) => {
+            g.fillStyle = shadeHex(style.upperWall, -3);
+            g.fillRect(0, 0, w, h);
+            g.globalAlpha = 0.18;
+            g.fillStyle = shadeHex(style.upperWall, 20);
+            for (let i = 0; i < 180; i++) {
+                const x = (i * 37 + variant * 17) % w;
+                const y = (i * 53 + variant * 31) % h;
+                g.fillRect(x, y, 2, 2);
+            }
+            g.globalAlpha = 0.22;
+            g.fillStyle = '#000';
+            for (let i = 0; i < 60; i++) {
+                const y = (i * 9 + variant * 13) % h;
+                g.fillRect(0, y, w, 1);
+            }
+            g.globalAlpha = 1;
+        });
+        tex.repeat.set(1.2, 1.2);
+        plasterCache.set(key, tex);
+        return tex;
+    }
+
+    function getPlasterNormalTexture(style, variant) {
+        if (!TEXTURE_POLICY.plaster) return null;
+        const key = `${style.name}-${variant}`;
+        if (plasterNormalCache.has(key)) return plasterNormalCache.get(key);
+        const tex = makeLinearCanvasTexture((g, w, h) => {
+            g.fillStyle = 'rgb(128,128,255)';
+            g.fillRect(0, 0, w, h);
+            g.globalAlpha = 0.16;
+            for (let i = 0; i < 180; i++) {
+                const x = (i * 23 + variant * 13) % w;
+                const y = (i * 37 + variant * 17) % h;
+                g.fillStyle = i % 2 ? 'rgb(132,124,255)' : 'rgb(124,132,255)';
+                g.fillRect(x, y, 2, 2);
+            }
+            g.globalAlpha = 1;
+        }, 128, 128);
+        tex.repeat.set(1.2, 1.2);
+        plasterNormalCache.set(key, tex);
+        return tex;
+    }
+
+    function getPlasterRoughnessTexture(style, variant) {
+        if (!TEXTURE_POLICY.plaster) return null;
+        const key = `${style.name}-${variant}`;
+        if (plasterRoughnessCache.has(key)) return plasterRoughnessCache.get(key);
+        const tex = makeLinearCanvasTexture((g, w, h) => {
+            g.fillStyle = 'rgb(198,198,198)';
+            g.fillRect(0, 0, w, h);
+            g.globalAlpha = 0.35;
+            for (let i = 0; i < 170; i++) {
+                const x = (i * 11 + variant * 29) % w;
+                const y = (i * 17 + variant * 31) % h;
+                g.fillStyle = i % 2 ? 'rgb(220,220,220)' : 'rgb(165,165,165)';
+                g.fillRect(x, y, 1, 1);
+            }
+            g.globalAlpha = 1;
+        }, 128, 128);
+        tex.repeat.set(1.2, 1.2);
+        plasterRoughnessCache.set(key, tex);
+        return tex;
+    }
+
+    function getFloorAlbedoTexture(style) {
+        if (!TEXTURE_POLICY.floor) return null;
+        const key = `${style.name}-${state.styleVariant}`;
+        if (floorAlbedoCache.has(key)) return floorAlbedoCache.get(key);
+        const tex = makeCanvasTexture((g, w, h) => {
+            g.fillStyle = shadeHex(style.floor, 8);
+            g.fillRect(0, 0, w, h);
+
+            const plankH = 18;
+            for (let y = 0; y < h; y += plankH) {
+                const plankIdx = Math.floor(y / plankH);
+                const stripeTone = (plankIdx % 2 === 0) ? 14 : 4;
+                g.globalAlpha = 0.42;
+                g.fillStyle = shadeHex(style.floor, stripeTone);
+                g.fillRect(0, y, w, plankH - 1);
+
+                g.globalAlpha = 0.18;
+                g.fillStyle = shadeHex(style.floor, -8);
+                g.fillRect(0, y + plankH - 1, w, 1);
+            }
+
+            g.globalAlpha = 0.18;
+            g.fillStyle = shadeHex(style.floor, -16);
+            for (let i = 0; i < 520; i++) {
+                const x = (i * 31 + state.mazeSeed * 7) % w;
+                const y = (i * 47 + state.styleVariant * 23) % h;
+                g.fillRect(x, y, 1, 1);
+            }
+
+            g.globalAlpha = 0.12;
+            g.fillStyle = shadeHex(style.floor, 24);
+            for (let i = 0; i < 120; i++) {
+                const x = (i * 53 + state.mazeSeed * 5) % w;
+                const y = (i * 29 + state.styleVariant * 19) % h;
+                g.fillRect(x, y, 2, 1);
+            }
+            g.globalAlpha = 1;
+        }, 256, 256);
+        tex.repeat.set(4.2, 4.2);
+        floorAlbedoCache.set(key, tex);
+        return tex;
+    }
+
+    function getFloorNormalTexture(style) {
+        if (!TEXTURE_POLICY.floor) return null;
+        const key = `${style.name}-${state.styleVariant}`;
+        if (floorNormalCache.has(key)) return floorNormalCache.get(key);
+        const tex = makeLinearCanvasTexture((g, w, h) => {
+            g.fillStyle = 'rgb(128,128,255)';
+            g.fillRect(0, 0, w, h);
+            g.globalAlpha = 0.22;
+            for (let i = 0; i < 300; i++) {
+                const x = (i * 13 + state.mazeSeed) % w;
+                const y = (i * 19 + state.styleVariant * 17) % h;
+                g.fillStyle = i % 2 ? 'rgb(120,136,255)' : 'rgb(136,120,255)';
+                g.fillRect(x, y, 2, 1);
+            }
+            g.globalAlpha = 1;
+        }, 128, 128);
+        tex.repeat.set(4.2, 4.2);
+        floorNormalCache.set(key, tex);
+        return tex;
+    }
+
+    function getFloorRoughnessTexture(style) {
+        if (!TEXTURE_POLICY.floor) return null;
+        const key = `${style.name}-${state.styleVariant}`;
+        if (floorRoughnessCache.has(key)) return floorRoughnessCache.get(key);
+        const tex = makeLinearCanvasTexture((g, w, h) => {
+            g.fillStyle = 'rgb(165,165,165)';
+            g.fillRect(0, 0, w, h);
+            g.globalAlpha = 0.26;
+            for (let i = 0; i < 260; i++) {
+                const x = (i * 17 + state.mazeSeed * 3) % w;
+                const y = (i * 29 + state.styleVariant * 13) % h;
+                g.fillStyle = i % 2 ? 'rgb(184,184,184)' : 'rgb(140,140,140)';
+                g.fillRect(x, y, 2, 2);
+            }
+            g.globalAlpha = 1;
+        }, 128, 128);
+        tex.repeat.set(4.2, 4.2);
+        floorRoughnessCache.set(key, tex);
+        return tex;
+    }
+
+    function getDecalTexture(style, variant) {
+        if (!TEXTURE_POLICY.decals) return null;
+        const key = `${style.name}-${variant}`;
+        if (decalCache.has(key)) return decalCache.get(key);
+        const tex = makeLinearCanvasTexture((g, w, h) => {
+            g.clearRect(0, 0, w, h);
+            g.fillStyle = 'rgba(0,0,0,0)';
+            g.fillRect(0, 0, w, h);
+            const stain = shadeHex(style.trim, -40);
+            for (let i = 0; i < 18; i++) {
+                const x = (i * 23 + variant * 37) % w;
+                const y = (i * 17 + variant * 29) % h;
+                const r = 4 + ((i + variant) % 9);
+                g.globalAlpha = 0.05 + ((i % 4) * 0.03);
+                g.fillStyle = stain;
+                g.beginPath();
+                g.arc(x, y, r, 0, Math.PI * 2);
+                g.fill();
+            }
+            g.globalAlpha = 0.14;
+            g.strokeStyle = shadeHex(style.trim, -56);
+            g.lineWidth = 1;
+            for (let i = 0; i < 8; i++) {
+                const x = (i * 31 + variant * 7) % w;
+                const y = (i * 19 + variant * 13) % h;
+                g.beginPath();
+                g.moveTo(x, y);
+                g.lineTo(x + 10, y + 3);
+                g.stroke();
+            }
+            g.globalAlpha = 1;
+        }, 96, 96);
+        decalCache.set(key, tex);
+        return tex;
+    }
+
+    function placeAgingDecals(root) {
+        const decalGeom = new THREE.PlaneGeometry(0.44, 0.3);
+        const style = state.style;
+        let spawned = 0;
+        const maxDecals = 18;
+        for (let y = 1; y < state.rows - 1 && spawned < maxDecals; y++) {
+            for (let x = 1; x < state.cols - 1 && spawned < maxDecals; x++) {
+                if (state.grid[y][x] !== 0) continue;
+                const sig = hash32(x, y, state.mazeSeed, 8119);
+                if ((sig % 100) > 14) continue;
+                const sides = [
+                    { dx: 0, dy: -1, nx: 0, nz: -1, yaw: Math.PI },
+                    { dx: 1, dy: 0, nx: 1, nz: 0, yaw: -Math.PI / 2 },
+                    { dx: 0, dy: 1, nx: 0, nz: 1, yaw: 0 },
+                    { dx: -1, dy: 0, nx: -1, nz: 0, yaw: Math.PI / 2 },
+                ];
+                const side = sides[sig % sides.length];
+                if (!isWall(x + side.dx, y + side.dy)) continue;
+                const p = gridToWorld(x, y);
+                const wallX = p.x + side.nx * (TILE * 0.43);
+                const wallZ = p.z + side.nz * (TILE * 0.43);
+                const mat = new THREE.MeshBasicMaterial({
+                    map: getDecalTexture(style, sig % 17),
+                    color: 0xffffff,
+                    transparent: true,
+                    opacity: 0.42,
+                    depthWrite: false,
+                });
+                const decal = new THREE.Mesh(decalGeom, mat);
+                decal.position.set(
+                    wallX - side.nx * 0.02 + ((sig >>> 4) % 7 - 3) * 0.04,
+                    0.45 + ((sig >>> 9) % 8) * 0.18,
+                    wallZ - side.nz * 0.02 + ((sig >>> 13) % 7 - 3) * 0.04,
+                );
+                decal.rotation.y = side.yaw;
+                root.add(decal);
+                spawned += 1;
+            }
+        }
+    }
+
+    function inBounds(x, y) {
+        return x >= 0 && y >= 0 && x < state.cols && y < state.rows;
+    }
+
+    function isWall(x, y) {
+        if (!inBounds(x, y)) return true;
+        return state.grid[y][x] === 1;
+    }
+
+    function gridToWorld(x, y) {
+        return {
+            x: (x - state.cols / 2) * TILE + TILE * 0.5,
+            z: (y - state.rows / 2) * TILE + TILE * 0.5,
+        };
+    }
+
+    function dirToYaw(dir) {
+        switch ((Number(dir) % 4 + 4) % 4) {
+            case 0: return 0;
+            case 1: return -Math.PI / 2;
+            case 2: return Math.PI;
+            case 3: return Math.PI / 2;
+            default: return 0;
+        }
+    }
+
+    function getForwardCell() {
+        const d = DIRS[state.player.dir];
+        return { x: state.player.x + d.x, y: state.player.y + d.y };
+    }
+
+    function isStudyDoorLockedAt(x, y) {
+        const door = state.interactables.get('study_door');
+        if (!door || door.state !== 'active') return false;
+        return door.x === x && door.y === y;
+    }
+
+    function isWalkable(x, y) {
+        if (isWall(x, y)) return false;
+        if (isStudyDoorLockedAt(x, y)) return false;
+        return true;
+    }
+
+    function updateCameraFromState() {
+        cameraMotion.active = false;
+        const p = gridToWorld(state.player.x, state.player.y);
+        camera.position.set(p.x, EYE_H, p.z);
+        camera.rotation.set(0, dirToYaw(state.player.dir), 0);
+    }
+
+    function isCameraTransitionActive() {
+        return !!cameraMotion.active;
+    }
+
+    function startCameraTransition(type, durationMs, startPos, endPos, startYaw, endYaw) {
+        cameraMotion.active = true;
+        cameraMotion.type = type;
+        cameraMotion.startedAt = performance.now();
+        cameraMotion.durationMs = Math.max(1, Number(durationMs) || 1);
+        cameraMotion.startX = startPos.x;
+        cameraMotion.startZ = startPos.z;
+        cameraMotion.endX = endPos.x;
+        cameraMotion.endZ = endPos.z;
+        cameraMotion.startYaw = startYaw;
+        cameraMotion.endYaw = endYaw;
+    }
+
+    function updateCameraTransition(nowMs) {
+        if (!cameraMotion.active) return;
+        const tRaw = (nowMs - cameraMotion.startedAt) / cameraMotion.durationMs;
+        const t = Math.max(0, Math.min(1, tRaw));
+        const eased = t * t * (3 - 2 * t);
+        const x = cameraMotion.startX + (cameraMotion.endX - cameraMotion.startX) * eased;
+        const z = cameraMotion.startZ + (cameraMotion.endZ - cameraMotion.startZ) * eased;
+        const y = EYE_H + (cameraMotion.type === 'forward' ? Math.sin(eased * Math.PI) * MOVE_BOB_AMPLITUDE : 0);
+        const yaw = cameraMotion.startYaw + (cameraMotion.endYaw - cameraMotion.startYaw) * eased;
+
+        camera.position.set(x, y, z);
+        camera.rotation.set(0, yaw, 0);
+
+        if (t >= 1) {
+            cameraMotion.active = false;
+            const p = gridToWorld(state.player.x, state.player.y);
+            camera.position.set(p.x, EYE_H, p.z);
+            camera.rotation.set(0, dirToYaw(state.player.dir), 0);
+        }
+    }
+
+    function chooseStyleProfile() {
+        let chosen = STYLE_BIBLES[0];
+        let chosenVariant = 0;
+        let chosenWear = 2;
+        let chosenHash = '0-0-2';
+
+        for (let i = 0; i < 20; i++) {
+            const idx = randInt(STYLE_BIBLES.length);
+            const variant = randInt(6);
+            const wear = randInt(4);
+            const hash = `${idx}-${variant}-${wear}`;
+            if (!state.recentStyleHashes.includes(hash)) {
+                chosen = STYLE_BIBLES[idx];
+                chosenVariant = variant;
+                chosenWear = wear;
+                chosenHash = hash;
+                break;
+            }
+        }
+
+        state.style = applyStyleColorVariation(chosen, chosenVariant, chosenWear);
+        state.styleVariant = chosenVariant;
+        state.styleHash = chosenHash;
+        state.styleWear = 0.12 + (chosenWear / 10);
+        state.styleSignature = `${chosen.name}|v${chosenVariant}|w${chosenWear}|a${state.style.accent.toString(16)}`;
+        state.recentStyleHashes.push(chosenHash);
+        if (state.recentStyleHashes.length > 4) {
+            state.recentStyleHashes.shift();
+        }
+    }
+
+    function generateMaze() {
+        state.grid = Array.from({ length: state.rows }, () => Array(state.cols).fill(1));
+        const stack = [{ x: 1, y: 1 }];
+        state.grid[1][1] = 0;
+
+        while (stack.length) {
+            const cur = stack[stack.length - 1];
+            const dirs = [];
+            for (const d of DIRS) {
+                const nx = cur.x + d.x * 2;
+                const ny = cur.y + d.y * 2;
+                if (nx <= 0 || ny <= 0 || nx >= state.cols - 1 || ny >= state.rows - 1) continue;
+                if (state.grid[ny][nx] === 1) {
+                    dirs.push({ nx, ny, mx: cur.x + d.x, my: cur.y + d.y });
+                }
+            }
+            if (!dirs.length) {
+                stack.pop();
+                continue;
+            }
+            const pick = dirs[randInt(dirs.length)];
+            state.grid[pick.my][pick.mx] = 0;
+            state.grid[pick.ny][pick.nx] = 0;
+            stack.push({ x: pick.nx, y: pick.ny });
+        }
+
+        enforceCorridorFlow(5);
+    }
+
+    function getMazeSideForLevel(level) {
+        const safeLevel = Math.max(1, Math.floor(Number(level) || 1));
+        const side = BASE_MAZE_SIDE + (safeLevel - 1) * MAZE_SIDE_STEP;
+        return (side % 2 === 0) ? side + 1 : side;
+    }
+
+    function isStraightVerticalCell(x, y) {
+        if (state.grid[y][x] !== 0) return false;
+        return !isWall(x, y - 1) && !isWall(x, y + 1) && isWall(x - 1, y) && isWall(x + 1, y);
+    }
+
+    function isStraightHorizontalCell(x, y) {
+        if (state.grid[y][x] !== 0) return false;
+        return !isWall(x - 1, y) && !isWall(x + 1, y) && isWall(x, y - 1) && isWall(x, y + 1);
+    }
+
+    function tryCarveSidePocket(x, y, vertical, salt) {
+        const candidates = vertical ? [{ x: -1, y: 0 }, { x: 1, y: 0 }] : [{ x: 0, y: -1 }, { x: 0, y: 1 }];
+        const flip = (hash32(x, y, state.mazeSeed, salt) % 2) === 1;
+        const order = flip ? [1, 0] : [0, 1];
+
+        for (const i of order) {
+            const d = candidates[i];
+            const tx = x + d.x;
+            const ty = y + d.y;
+            if (tx <= 0 || ty <= 0 || tx >= state.cols - 1 || ty >= state.rows - 1) continue;
+            if (state.grid[ty][tx] !== 1) continue;
+            state.grid[ty][tx] = 0;
+            return true;
+        }
+        return false;
+    }
+
+    function processStraightRun(runCells, vertical, maxRun) {
+        if (runCells.length <= maxRun) return;
+        for (let i = maxRun - 1; i < runCells.length - 1; i += maxRun) {
+            const c = runCells[i];
+            tryCarveSidePocket(c.x, c.y, vertical, i + (vertical ? 301 : 719));
+        }
+    }
+
+    function enforceCorridorFlow(maxForwardPresses) {
+        const maxRun = Math.max(2, Number(maxForwardPresses) || 3);
+
+        for (let x = 1; x < state.cols - 1; x++) {
+            let run = [];
+            for (let y = 1; y < state.rows - 1; y++) {
+                if (isStraightVerticalCell(x, y)) {
+                    run.push({ x, y });
+                } else {
+                    processStraightRun(run, true, maxRun);
+                    run = [];
+                }
+            }
+            processStraightRun(run, true, maxRun);
+        }
+
+        for (let y = 1; y < state.rows - 1; y++) {
+            let run = [];
+            for (let x = 1; x < state.cols - 1; x++) {
+                if (isStraightHorizontalCell(x, y)) {
+                    run.push({ x, y });
+                } else {
+                    processStraightRun(run, false, maxRun);
+                    run = [];
+                }
+            }
+            processStraightRun(run, false, maxRun);
+        }
+    }
+
+    function bfsDistances(startX, startY) {
+        const dist = Array.from({ length: state.rows }, () => Array(state.cols).fill(-1));
+        const q = [{ x: startX, y: startY }];
+        dist[startY][startX] = 0;
+        for (let qi = 0; qi < q.length; qi++) {
+            const cur = q[qi];
+            for (const d of DIRS) {
+                const nx = cur.x + d.x;
+                const ny = cur.y + d.y;
+                if (!inBounds(nx, ny) || isWall(nx, ny)) continue;
+                if (dist[ny][nx] !== -1) continue;
+                dist[ny][nx] = dist[cur.y][cur.x] + 1;
+                q.push({ x: nx, y: ny });
+            }
+        }
+        return dist;
+    }
+
+    function openNeighborCount(x, y) {
+        let n = 0;
+        for (const d of DIRS) if (!isWall(x + d.x, y + d.y)) n++;
+        return n;
+    }
+
+    function getDeadEndOpenDirection(x, y) {
+        for (let dir = 0; dir < DIRS.length; dir++) {
+            const d = DIRS[dir];
+            if (!isWall(x + d.x, y + d.y)) return dir;
+        }
+        return 1;
+    }
+
+    function chooseWallMountDirection(x, y, anchorX = x, anchorY = y) {
+        const wallDirs = [];
+        for (let dir = 0; dir < DIRS.length; dir++) {
+            const d = DIRS[dir];
+            if (isWall(x + d.x, y + d.y)) {
+                wallDirs.push(dir);
+            }
+        }
+        if (!wallDirs.length) return 2;
+
+        const vx = anchorX - x;
+        const vy = anchorY - y;
+        let bestOpenDir = 0;
+        let bestDot = -Infinity;
+        for (let dir = 0; dir < DIRS.length; dir++) {
+            const d = DIRS[dir];
+            const dot = d.x * vx + d.y * vy;
+            if (dot > bestDot) {
+                bestDot = dot;
+                bestOpenDir = dir;
+            }
+        }
+
+        const preferredWallDir = (bestOpenDir + 2) % 4;
+        if (wallDirs.includes(preferredWallDir)) return preferredWallDir;
+
+        wallDirs.sort((a, b) => a - b);
+        return wallDirs[0];
+    }
+
+    function getOpenDirections(x, y) {
+        const dirs = [];
+        for (let dir = 0; dir < DIRS.length; dir++) {
+            const d = DIRS[dir];
+            if (!isWall(x + d.x, y + d.y)) dirs.push(dir);
+        }
+        return dirs;
+    }
+
+    function collectAlcoveCandidates() {
+        const list = [];
+        for (let y = 1; y < state.rows - 1; y++) {
+            for (let x = 1; x < state.cols - 1; x++) {
+                if (isWall(x, y)) continue;
+                const openDirs = getOpenDirections(x, y);
+                if (openDirs.length !== 1) continue;
+                const openDir = openDirs[0];
+                list.push({
+                    x,
+                    y,
+                    openDir,
+                    faceDir: (openDir + 2) % 4,
+                });
+            }
+        }
+        return list;
+    }
+
+    function pickFarthestCandidate(candidates, distGrid, excluded, salt) {
+        let best = null;
+        let bestScore = -Infinity;
+        for (const c of candidates) {
+            const key = `${c.x},${c.y}`;
+            if (excluded.has(key)) continue;
+            const d = distGrid[c.y]?.[c.x] ?? -1;
+            if (d < 0) continue;
+            const tie = hash32(c.x, c.y, state.mazeSeed, salt) % 1000;
+            const score = d * 1000 + tie;
+            if (score > bestScore) {
+                bestScore = score;
+                best = c;
+            }
+        }
+        return best;
+    }
+
+    function pickTargetDistanceCandidate(candidates, distGrid, excluded, salt, targetRatio = 0.6) {
+        let maxD = -1;
+        for (const c of candidates) {
+            if (excluded.has(`${c.x},${c.y}`)) continue;
+            const d = distGrid[c.y]?.[c.x] ?? -1;
+            if (d > maxD) maxD = d;
+        }
+        if (maxD <= 0) return null;
+
+        const target = maxD * Math.max(0.2, Math.min(0.9, Number(targetRatio) || 0.6));
+        let best = null;
+        let bestScore = -Infinity;
+        for (const c of candidates) {
+            if (excluded.has(`${c.x},${c.y}`)) continue;
+            const d = distGrid[c.y]?.[c.x] ?? -1;
+            if (d < 0) continue;
+            const tie = hash32(c.x, c.y, state.mazeSeed, salt) % 1000;
+            const score = (-Math.abs(d - target) * 1000) + (d * 10) + tie;
+            if (score > bestScore) {
+                bestScore = score;
+                best = c;
+            }
+        }
+        return best;
+    }
+
+    function pickFarthestWallMountCell(distGrid, excluded, anchorX, anchorY) {
+        let best = null;
+        let bestScore = -Infinity;
+        for (let y = 1; y < state.rows - 1; y++) {
+            for (let x = 1; x < state.cols - 1; x++) {
+                if (isWall(x, y)) continue;
+                if (excluded.has(`${x},${y}`)) continue;
+                const d = distGrid[y][x];
+                if (d < 0) continue;
+                const wallDirs = [];
+                for (let dir = 0; dir < DIRS.length; dir++) {
+                    const v = DIRS[dir];
+                    if (isWall(x + v.x, y + v.y)) wallDirs.push(dir);
+                }
+                if (!wallDirs.length) continue;
+                const tie = hash32(x, y, state.mazeSeed, 9133) % 1000;
+                const score = d * 1000 + tie;
+                if (score > bestScore) {
+                    bestScore = score;
+                    best = {
+                        x,
+                        y,
+                        faceDir: chooseWallMountDirection(x, y, anchorX, anchorY),
+                    };
+                }
+            }
+        }
+        return best;
+    }
+
+    function setupObjectiveAndInteractables() {
+        state.interactables.clear();
+        state.objective.keyCollected = false;
+        state.objective.complete = false;
+        state.objective.status = 'active';
+        state.objective.text = 'Find the brass key and unlock the study door.';
+        state.objective.hint = 'Find the glowing wall-mounted key, then press ENTER.';
+
+        const alcoves = collectAlcoveCandidates();
+
+        let start = { x: 1, y: 1 };
+        if (alcoves.length) {
+            const startIndex = hash32(state.mazeSeed, alcoves.length, state.styleVariant, 1777) % alcoves.length;
+            start = alcoves[startIndex];
+        }
+
+        state.player.x = start.x;
+        state.player.y = start.y;
+        state.player.dir = Number.isInteger(start.openDir) ? start.openDir : getDeadEndOpenDirection(start.x, start.y);
+
+        const distFromStart = bfsDistances(start.x, start.y);
+        const used = new Set([`${start.x},${start.y}`]);
+
+        let keyPos = pickTargetDistanceCandidate(alcoves, distFromStart, used, 7001, 0.58)
+            || pickFarthestCandidate(alcoves, distFromStart, used, 7001);
+        let layoutStrategy = 'alcove_pair';
+        if (!keyPos) {
+            keyPos = {
+                x: start.x,
+                y: start.y,
+                faceDir: (getDeadEndOpenDirection(start.x, start.y) + 2) % 4,
+            };
+            layoutStrategy = 'single_alcove_fallback';
+        }
+        used.add(`${keyPos.x},${keyPos.y}`);
+
+        const key = new Interactable({
+            id: 'key',
+            type: 'objective_key',
+            x: keyPos.x,
+            y: keyPos.y,
+            faceDir: Number.isInteger(keyPos.faceDir) ? keyPos.faceDir : ((getDeadEndOpenDirection(keyPos.x, keyPos.y) + 2) % 4),
+            telegraph: 'brass_key',
+            onInteract(game, self) {
+                if (game.objective.keyCollected) return;
+                game.objective.keyCollected = true;
+                playKeyPickup();
+                game.objective.hint = 'You have the key. Find the locked study door and press ENTER.';
+                self.state = 'consumed';
+                buildGeometry();
+                postObjectiveState();
+            },
+        });
+
+        const distFromKey = bfsDistances(key.x, key.y);
+        let doorPos = pickTargetDistanceCandidate(alcoves, distFromKey, used, 9001, 0.5)
+            || pickFarthestCandidate(alcoves, distFromKey, used, 9001);
+        if (!doorPos) {
+            doorPos = pickFarthestWallMountCell(distFromKey, used, key.x, key.y);
+            layoutStrategy = 'alcove_plus_wall_fallback';
+        }
+        if (!doorPos) {
+            doorPos = {
+                x: start.x,
+                y: start.y,
+                faceDir: chooseWallMountDirection(start.x, start.y, key.x, key.y),
+            };
+            layoutStrategy = 'start_cell_wall_fallback';
+        }
+
+        const studyDoor = new Interactable({
+            id: 'study_door',
+            type: 'locked_study_door',
+            x: doorPos.x,
+            y: doorPos.y,
+            faceDir: Number.isInteger(doorPos.faceDir) ? doorPos.faceDir : chooseWallMountDirection(doorPos.x, doorPos.y, key.x, key.y),
+            requires: 'key',
+            telegraph: 'study_door',
+            onInteract(game, self) {
+                if (!game.objective.keyCollected) {
+                    game.objective.hint = 'The study door is locked. Find the brass key first.';
+                    postObjectiveState();
+                    return;
+                }
+                self.state = 'opened';
+                playDoorOpen();
+                game.objective.complete = true;
+                game.objective.status = 'complete';
+                game.objective.hint = 'You unlocked the study. New maze loading...';
+                postObjectiveState();
+                setTimeout(() => startNewMaze(Math.floor(Math.random() * 1000000000) + 1, { advanceLevel: true }), 700);
+            },
+        });
+
+        state.interactables.set('key', key);
+        state.interactables.set('study_door', studyDoor);
+        state.doorCell = { x: studyDoor.x, y: studyDoor.y };
+        state.objectiveLayout = {
+            strategy: layoutStrategy,
+            alcoveCount: alcoves.length,
+            key: { x: key.x, y: key.y, faceDir: key.faceDir },
+            door: { x: studyDoor.x, y: studyDoor.y, faceDir: studyDoor.faceDir },
+        };
+    }
+
+    function spawnSconce(root, socket, style, signature) {
+        const inwardX = -socket.nx;
+        const inwardZ = -socket.nz;
+        const tangentX = -inwardZ;
+        const tangentZ = inwardX;
+        const yaw = Math.atan2(inwardX, inwardZ);
+        const variant = signature % 4;
+
+        const metal = new THREE.MeshStandardMaterial({ color: style.brass, roughness: 0.33, metalness: 0.82 });
+        const warmGlass = new THREE.MeshStandardMaterial({ color: 0xffefcf, emissive: 0xffcf9c, emissiveIntensity: 0.35, roughness: 0.5, metalness: 0.08 });
+        const darkMetal = new THREE.MeshStandardMaterial({ color: blendHex(style.brass, 0x222222, 0.4), roughness: 0.45, metalness: 0.7 });
+
+        const pos = (depth, side, height) => ({
+            x: socket.x + inwardX * depth + tangentX * side,
+            z: socket.z + inwardZ * depth + tangentZ * side,
+            y: height,
+        });
+
+        const backplate = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.36, 0.04), metal);
+        backplate.position.set(socket.x, 1.68, socket.z);
+        backplate.rotation.y = yaw;
+        root.add(backplate);
+
+        function addGlow(x, y, z, size = 0.34, alpha = 0.2) {
+            const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+                map: getGlowSpriteTexture(),
+                color: style.practicalLight || 0xffdcad,
+                transparent: true,
+                opacity: alpha,
+                depthWrite: false,
+                depthTest: true,
+                blending: THREE.AdditiveBlending,
+            }));
+            glow.position.set(x, y, z);
+            glow.scale.set(size, size, 1);
+            root.add(glow);
+        }
+
+        if (variant === 0) {
+            const arm = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.035, 0.16), metal);
+            const p = pos(0.09, 0, 1.68);
+            arm.position.set(p.x, p.y, p.z);
+            arm.rotation.y = yaw;
+            root.add(arm);
+
+            const candle = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.16, 10), new THREE.MeshStandardMaterial({ color: 0xf2e9d9, roughness: 0.85 }));
+            const cp = pos(0.16, 0, 1.72);
+            candle.position.set(cp.x, cp.y, cp.z);
+            root.add(candle);
+
+            const flame = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 10), warmGlass);
+            const fp = pos(0.18, 0, 1.83);
+            flame.position.set(fp.x, fp.y, fp.z);
+            root.add(flame);
+            addGlow(fp.x - socket.nx * 0.03, fp.y, fp.z - socket.nz * 0.03, 0.4, 0.22);
+        } else if (variant === 1) {
+            const arm = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.035, 0.13), metal);
+            const ap = pos(0.08, 0, 1.68);
+            arm.position.set(ap.x, ap.y, ap.z);
+            arm.rotation.y = yaw;
+            root.add(arm);
+
+            for (const side of [-0.12, 0.12]) {
+                const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.03, 0.08, 12), metal);
+                const cp = pos(0.14, side, 1.7);
+                cup.position.set(cp.x, cp.y, cp.z);
+                root.add(cup);
+
+                const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 10), warmGlass);
+                const bp = pos(0.16, side, 1.77);
+                bulb.position.set(bp.x, bp.y, bp.z);
+                root.add(bulb);
+                addGlow(bp.x - socket.nx * 0.03, bp.y, bp.z - socket.nz * 0.03, 0.28, 0.18);
+            }
+        } else if (variant === 2) {
+            const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.18, 10), metal);
+            const sp = pos(0.11, 0, 1.68);
+            stem.position.set(sp.x, sp.y, sp.z);
+            stem.rotation.x = Math.PI / 2;
+            stem.rotation.y = yaw;
+            root.add(stem);
+
+            const globe = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 12), warmGlass);
+            const gp = pos(0.18, 0, 1.7);
+            globe.position.set(gp.x, gp.y, gp.z);
+            root.add(globe);
+            addGlow(gp.x - socket.nx * 0.03, gp.y, gp.z - socket.nz * 0.03, 0.42, 0.24);
+        } else {
+            const hanger = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, 0.14), darkMetal);
+            const hp = pos(0.08, 0, 1.76);
+            hanger.position.set(hp.x, hp.y, hp.z);
+            hanger.rotation.y = yaw;
+            root.add(hanger);
+
+            const lantern = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.2, 0.1), darkMetal);
+            const lp = pos(0.16, 0, 1.64);
+            lantern.position.set(lp.x, lp.y, lp.z);
+            lantern.rotation.y = yaw;
+            root.add(lantern);
+
+            const core = new THREE.Mesh(new THREE.SphereGeometry(0.04, 10, 10), warmGlass);
+            const cp = pos(0.18, 0, 1.64);
+            core.position.set(cp.x, cp.y, cp.z);
+            root.add(core);
+            addGlow(cp.x - socket.nx * 0.03, cp.y, cp.z - socket.nz * 0.03, 0.36, 0.2);
+        }
+    }
+
+    function spawnWallShelf(root, socket, mats, style, signature) {
+        const inwardX = -socket.nx;
+        const inwardZ = -socket.nz;
+        const tangentX = -inwardZ;
+        const tangentZ = inwardX;
+        const yaw = Math.atan2(inwardX, inwardZ);
+        const variant = signature % 3;
+        const brassMat = new THREE.MeshStandardMaterial({ color: style.brass, roughness: 0.35, metalness: 0.78 });
+
+        const place = (depth, side, height) => ({
+            x: socket.x + inwardX * depth + tangentX * side,
+            z: socket.z + inwardZ * depth + tangentZ * side,
+            y: height,
+        });
+
+        const add = (mesh) => {
+            setShadowFlags(mesh, false, true);
+            root.add(mesh);
+        };
+
+        if (variant === 0) {
+            const shelf = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.06, 0.2), mats.woodMat);
+            const sp = place(0.12, 0, 1.26);
+            shelf.position.set(sp.x, sp.y, sp.z);
+            shelf.rotation.y = yaw;
+            add(shelf);
+
+            for (const side of [-0.26, 0.26]) {
+                const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.22, 0.03), brassMat);
+                const bp = place(0.08, side, 1.14);
+                bracket.position.set(bp.x, bp.y, bp.z);
+                bracket.rotation.y = yaw;
+                add(bracket);
+            }
+
+            for (let i = 0; i < 4; i++) {
+                const h = 0.2 + (i % 2) * 0.06;
+                const book = new THREE.Mesh(new THREE.BoxGeometry(0.065, h, 0.12), mats.fabricMat);
+                const p = place(0.14, -0.23 + i * 0.14, 1.26 + h * 0.5 + 0.03);
+                book.position.set(p.x, p.y, p.z);
+                book.rotation.y = yaw;
+                add(book);
+            }
+        } else if (variant === 1) {
+            for (const h of [1.12, 1.52]) {
+                const shelf = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.055, 0.18), mats.woodMat);
+                const sp = place(0.11, 0, h);
+                shelf.position.set(sp.x, sp.y, sp.z);
+                shelf.rotation.y = yaw;
+                add(shelf);
+            }
+
+            for (let i = 0; i < 3; i++) {
+                const book = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.22 + i * 0.03, 0.11), mats.fabricMat);
+                const p = place(0.14, -0.2 + i * 0.14, 1.28 + i * 0.02);
+                book.position.set(p.x, p.y, p.z);
+                book.rotation.y = yaw;
+                add(book);
+            }
+
+            const bustBase = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.065, 0.08, 10), mats.frameMat);
+            const bp = place(0.14, 0.2, 1.58);
+            bustBase.position.set(bp.x, bp.y, bp.z);
+            add(bustBase);
+            const bust = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 10), mats.mirrorMat);
+            bust.position.set(bp.x, bp.y + 0.1, bp.z);
+            add(bust);
+        } else {
+            const shelf = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.07, 0.22), mats.woodMat);
+            const sp = place(0.12, 0, 1.34);
+            shelf.position.set(sp.x, sp.y, sp.z);
+            shelf.rotation.y = yaw;
+            add(shelf);
+
+            const stackA = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.08, 0.13), mats.fabricMat);
+            const a = place(0.14, -0.22, 1.42);
+            stackA.position.set(a.x, a.y, a.z);
+            stackA.rotation.y = yaw;
+            add(stackA);
+
+            const stackB = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.07, 0.13), mats.fabricMat);
+            const b = place(0.14, -0.22, 1.5);
+            stackB.position.set(b.x, b.y, b.z);
+            stackB.rotation.y = yaw;
+            add(stackB);
+
+            const urn = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.045, 0.16, 12), mats.frameMat);
+            const u = place(0.14, 0.24, 1.46);
+            urn.position.set(u.x, u.y, u.z);
+            urn.rotation.y = yaw;
+            add(urn);
+        }
+    }
+
+    function spawnWallCabinet(root, socket, mats, style, signature) {
+        const inwardX = -socket.nx;
+        const inwardZ = -socket.nz;
+        const tangentX = -inwardZ;
+        const tangentZ = inwardX;
+        const yaw = Math.atan2(inwardX, inwardZ);
+        const variant = signature % 3;
+        const brassMat = new THREE.MeshStandardMaterial({ color: style.brass, roughness: 0.33, metalness: 0.82 });
+
+        const place = (depth, side, height) => ({
+            x: socket.x + inwardX * depth + tangentX * side,
+            z: socket.z + inwardZ * depth + tangentZ * side,
+            y: height,
+        });
+
+        const add = (mesh) => {
+            setShadowFlags(mesh, false, true);
+            root.add(mesh);
+        };
+
+        if (variant === 0) {
+            const body = new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.84, 0.2), mats.woodMat);
+            const p = place(0.12, 0, 1.42);
+            body.position.set(p.x, p.y, p.z);
+            body.rotation.y = yaw;
+            add(body);
+
+            for (const side of [-0.21, 0.21]) {
+                const panel = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.68, 0.03), mats.frameMat);
+                const pp = place(0.23, side, 1.42);
+                panel.position.set(pp.x, pp.y, pp.z);
+                panel.rotation.y = yaw;
+                add(panel);
+
+                const knob = new THREE.Mesh(new THREE.SphereGeometry(0.022, 8, 8), brassMat);
+                const kp = place(0.25, side + (side < 0 ? 0.14 : -0.14), 1.42);
+                knob.position.set(kp.x, kp.y, kp.z);
+                add(knob);
+            }
+        } else if (variant === 1) {
+            const body = new THREE.Mesh(new THREE.BoxGeometry(0.74, 0.92, 0.2), mats.woodMat);
+            const p = place(0.12, 0, 1.44);
+            body.position.set(p.x, p.y, p.z);
+            body.rotation.y = yaw;
+            add(body);
+
+            const glass = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.74, 0.018), mats.mirrorMat);
+            const gp = place(0.22, 0, 1.48);
+            glass.position.set(gp.x, gp.y, gp.z);
+            glass.rotation.y = yaw;
+            add(glass);
+
+            const shelf = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.03, 0.14), mats.frameMat);
+            const sp = place(0.14, 0, 1.44);
+            shelf.position.set(sp.x, sp.y, sp.z);
+            shelf.rotation.y = yaw;
+            add(shelf);
+        } else {
+            const body = new THREE.Mesh(new THREE.BoxGeometry(0.52, 1.18, 0.22), mats.woodMat);
+            const p = place(0.12, 0, 1.56);
+            body.position.set(p.x, p.y, p.z);
+            body.rotation.y = yaw;
+            add(body);
+
+            for (const h of [1.28, 1.84]) {
+                const trim = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.32, 0.02), mats.frameMat);
+                const tp = place(0.23, 0, h);
+                trim.position.set(tp.x, tp.y, tp.z);
+                trim.rotation.y = yaw;
+                add(trim);
+            }
+
+            const pull = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.12, 0.02), brassMat);
+            const pp = place(0.24, 0, 1.56);
+            pull.position.set(pp.x, pp.y, pp.z);
+            pull.rotation.y = yaw;
+            add(pull);
+        }
+    }
+
+    function spawnWallBanner(root, socket, mats, style, signature) {
+        const inwardX = -socket.nx;
+        const inwardZ = -socket.nz;
+        const tangentX = -inwardZ;
+        const tangentZ = inwardX;
+        const yaw = Math.atan2(inwardX, inwardZ);
+        const variant = signature % 3;
+        const accent = jitterColor(style.accent, signature % 17, 31, 16);
+        const bannerMat = new THREE.MeshStandardMaterial({ color: accent, roughness: 0.88, metalness: 0.03, side: THREE.DoubleSide });
+
+        const place = (depth, side, height) => ({
+            x: socket.x + inwardX * depth + tangentX * side,
+            z: socket.z + inwardZ * depth + tangentZ * side,
+            y: height,
+        });
+
+        const add = (mesh) => {
+            setShadowFlags(mesh, false, true);
+            root.add(mesh);
+        };
+
+        const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.76, 10), mats.frameMat);
+        const rp = place(0.09, 0, 2.1);
+        rod.position.set(rp.x, rp.y, rp.z);
+        rod.rotation.z = Math.PI / 2;
+        rod.rotation.y = yaw;
+        add(rod);
+
+        if (variant === 0) {
+            const cloth = new THREE.Mesh(new THREE.PlaneGeometry(0.66, 1.12, 1, 4), bannerMat);
+            const cp = place(0.11, 0, 1.46);
+            cloth.position.set(cp.x, cp.y, cp.z);
+            cloth.rotation.y = yaw;
+            add(cloth);
+        } else if (variant === 1) {
+            const clothTop = new THREE.Mesh(new THREE.PlaneGeometry(0.66, 0.78, 1, 3), bannerMat);
+            const tp = place(0.11, 0, 1.62);
+            clothTop.position.set(tp.x, tp.y, tp.z);
+            clothTop.rotation.y = yaw;
+            add(clothTop);
+
+            for (const side of [-0.18, 0.18]) {
+                const tail = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 0.42, 1, 2), bannerMat);
+                const p = place(0.11, side, 1.02);
+                tail.position.set(p.x, p.y, p.z);
+                tail.rotation.y = yaw;
+                add(tail);
+            }
+        } else {
+            const cloth = new THREE.Mesh(new THREE.PlaneGeometry(0.74, 1.0, 2, 5), bannerMat);
+            const cp = place(0.11, 0, 1.5);
+            cloth.position.set(cp.x, cp.y, cp.z);
+            cloth.rotation.y = yaw;
+            add(cloth);
+
+            const trim = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.045, 0.02), mats.frameMat);
+            const tp = place(0.1, 0, 1.98);
+            trim.position.set(tp.x, tp.y, tp.z);
+            trim.rotation.y = yaw;
+            add(trim);
+        }
+    }
+
+    function placeWallDressings(root) {
+        const style = state.style;
+        const decorMaterialCache = new Map();
+        const placedTypeByCell = new Map();
+        const artworkPool = shuffledArtworkList();
+        let artworkCursor = 0;
+
+        function decorCategory(type) {
+            if (type === 0 || type === 1 || type === 2) return 'frame';
+            if (type === 3 || type === 6) return 'shelf';
+            if (type === 4 || type === 7) return 'cabinet';
+            if (type === 5 || type === 8) return 'banner';
+            return 'sconce';
+        }
+
+        function chooseDecorType(baseType, x, y, signature) {
+            const baseCategory = decorCategory(baseType);
+            let bestType = baseType;
+            let bestScore = Infinity;
+            for (let t = 0; t < 10; t++) {
+                let sameType = 0;
+                let sameCategory = 0;
+                for (let oy = -2; oy <= 2; oy++) {
+                    for (let ox = -2; ox <= 2; ox++) {
+                        if (ox === 0 && oy === 0) continue;
+                        const prev = placedTypeByCell.get(`${x + ox},${y + oy}`);
+                        if (!Number.isInteger(prev)) continue;
+                        if (prev === t) sameType += 1;
+                        if (decorCategory(prev) === decorCategory(t)) sameCategory += 1;
+                    }
+                }
+
+                const west1 = placedTypeByCell.get(`${x - 1},${y}`);
+                const west2 = placedTypeByCell.get(`${x - 2},${y}`);
+                const north1 = placedTypeByCell.get(`${x},${y - 1}`);
+                const north2 = placedTypeByCell.get(`${x},${y - 2}`);
+                let streakPenalty = 0;
+                if (west1 === t && west2 === t) streakPenalty += 4;
+                if (north1 === t && north2 === t) streakPenalty += 4;
+
+                const categoryShiftPenalty = (decorCategory(t) === baseCategory) ? 0 : 0.7;
+                const tie = (hash32(x, y, signature, t * 131 + state.mazeSeed) % 1000) / 1000;
+                const score = sameType * 5 + sameCategory * 1.4 + streakPenalty + categoryShiftPenalty + tie;
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestType = t;
+                }
+            }
+            return bestType;
+        }
+
+        function nextArtwork() {
+            if (!artworkPool.length) return null;
+            if (artworkCursor >= artworkPool.length) return null;
+            const pick = artworkPool[artworkCursor];
+            artworkCursor += 1;
+            return pick;
+        }
+
+        function getDecorMats(x, y) {
+            const tone = hash32(x, y, state.mazeSeed, state.styleVariant * 13) % 7;
+            if (decorMaterialCache.has(tone)) return decorMaterialCache.get(tone);
+            const mats = {
+                woodMat: new THREE.MeshStandardMaterial({
+                    color: liftMinLuma(jitterColor(style.trim, tone + 1, 11, 9), 56),
+                    map: getWoodTexture(style, tone + 17, 23),
+                    normalMap: getWoodNormalTexture(style, tone + 17, 23),
+                    normalScale: new THREE.Vector2(0.14, 0.14),
+                    roughnessMap: getWoodRoughnessTexture(style, tone + 17, 23),
+                    roughness: 0.72,
+                    metalness: 0.08,
+                }),
+                fabricMat: new THREE.MeshStandardMaterial({ color: liftMinLuma(blendHex(jitterColor(style.accent, tone + 5, 23, 14), style.wall, 0.16), 58), roughness: 0.9, metalness: 0.02 }),
+                frameMat: new THREE.MeshStandardMaterial({
+                    color: liftMinLuma(jitterColor(style.brass, tone + 7, 29, 10), 70),
+                    roughness: 0.38,
+                    metalness: 0.72,
+                    roughnessMap: getWoodRoughnessTexture(style, tone + 41, 31),
+                }),
+                mirrorMat: new THREE.MeshStandardMaterial({ color: liftMinLuma(jitterColor(0x9ea4ad, tone + 9, 31, 6), 78), roughness: 0.18, metalness: 0.7 }),
+            };
+            decorMaterialCache.set(tone, mats);
+            return mats;
+        }
+
+        for (let y = 1; y < state.rows - 1; y++) {
+            for (let x = 1; x < state.cols - 1; x++) {
+                if (state.grid[y][x] !== 0) continue;
+                const dxSpawn = x - state.player.x;
+                const dySpawn = y - state.player.y;
+                if ((dxSpawn * dxSpawn + dySpawn * dySpawn) <= (DRESSING_SPAWN_SAFE_RADIUS * DRESSING_SPAWN_SAFE_RADIUS)) continue;
+                const opens = openNeighborCount(x, y);
+                if (opens === 4) continue;
+
+                const p = gridToWorld(x, y);
+                const mats = getDecorMats(x, y);
+                const sides = [
+                    { dx: 0, dy: -1, nx: 0, nz: -1, yaw: Math.PI },
+                    { dx: 1, dy: 0, nx: 1, nz: 0, yaw: -Math.PI / 2 },
+                    { dx: 0, dy: 1, nx: 0, nz: 1, yaw: 0 },
+                    { dx: -1, dy: 0, nx: -1, nz: 0, yaw: Math.PI / 2 },
+                ];
+
+                let placedInCell = false;
+                let fallbackSconce = null;
+
+                for (let si = 0; si < sides.length; si++) {
+                    const s = sides[si];
+                    if (!isWall(x + s.dx, y + s.dy)) continue;
+
+                    const signature = hash32(x, y, state.mazeSeed, si + state.styleVariant * 31);
+
+                    const wallX = p.x + s.nx * (TILE * 0.5);
+                    const wallZ = p.z + s.nz * (TILE * 0.5);
+                    const insetX = wallX - s.nx * 0.01;
+                    const insetZ = wallZ - s.nz * 0.01;
+                    const distToCenter = Math.abs((insetX - p.x) * s.nx + (insetZ - p.z) * s.nz);
+                    if (distToCenter < HALL_CENTER_CLEARANCE) continue;
+
+                    if (!fallbackSconce) fallbackSconce = { insetX, insetZ, nx: s.nx, nz: s.nz, signature };
+
+                    const placementThreshold = opens === 2 ? 68 : 74;
+                    const chance = signature % 100;
+                    if (chance > placementThreshold) continue;
+
+                    const baseType = signature % 10;
+                    const type = chooseDecorType(baseType, x, y, signature);
+                    let placedType = null;
+
+                    if (type === 0 || type === 1) {
+                        const artwork = nextArtwork();
+                        if (!artwork) {
+                            spawnSconce(root, { x: insetX, z: insetZ, nx: s.nx, nz: s.nz }, style, signature + 201);
+                            placedType = 9;
+                            placedInCell = true;
+                            placedTypeByCell.set(`${x},${y}`, placedType);
+                            continue;
+                        }
+
+                        const frame = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.84, 0.04), mats.frameMat);
+                        frame.position.set(insetX, 1.52, insetZ);
+                        frame.rotation.y = s.yaw;
+                        setShadowFlags(frame, false, true);
+                        root.add(frame);
+                        const artMat = new THREE.MeshStandardMaterial({
+                            color: 0xffffff,
+                            map: getArtworkTexture(artwork.file),
+                            roughness: 0.82,
+                            metalness: 0.02,
+                        });
+                        const art = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.7, 0.02), artMat);
+                        art.position.set(insetX - s.nx * 0.02, 1.52, insetZ - s.nz * 0.02);
+                        art.rotation.y = s.yaw;
+                        setShadowFlags(art, false, true);
+                        root.add(art);
+                        placedType = type;
+                        placedInCell = true;
+                    } else if (type === 2) {
+                        const artwork = nextArtwork();
+                        if (!artwork) {
+                            spawnSconce(root, { x: insetX, z: insetZ, nx: s.nx, nz: s.nz }, style, signature + 401);
+                            placedType = 9;
+                            placedInCell = true;
+                            placedTypeByCell.set(`${x},${y}`, placedType);
+                            continue;
+                        }
+
+                        const mirrorFrame = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.96, 0.04), mats.woodMat);
+                        mirrorFrame.position.set(insetX, 1.45, insetZ);
+                        mirrorFrame.rotation.y = s.yaw;
+                        setShadowFlags(mirrorFrame, false, true);
+                        root.add(mirrorFrame);
+                        const artMat = new THREE.MeshStandardMaterial({
+                            color: 0xffffff,
+                            map: getArtworkTexture(artwork.file),
+                            roughness: 0.8,
+                            metalness: 0.02,
+                            emissive: 0x111111,
+                            emissiveIntensity: 0.18,
+                        });
+                        const portrait = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.8, 0.02), artMat);
+                        portrait.position.set(insetX - s.nx * 0.02, 1.45, insetZ - s.nz * 0.02);
+                        portrait.rotation.y = s.yaw;
+                        setShadowFlags(portrait, false, true);
+                        root.add(portrait);
+                        placedType = type;
+                        placedInCell = true;
+                    } else if (type === 3 || type === 6) {
+                        spawnWallShelf(root, { x: insetX, z: insetZ, nx: s.nx, nz: s.nz }, mats, style, signature + 71);
+                        placedType = type;
+                        placedInCell = true;
+                    } else if (type === 4 || type === 7) {
+                        spawnWallCabinet(root, { x: insetX, z: insetZ, nx: s.nx, nz: s.nz }, mats, style, signature + 113);
+                        placedType = type;
+                        placedInCell = true;
+                    } else if (type === 5 || type === 8) {
+                        spawnWallBanner(root, { x: insetX, z: insetZ, nx: s.nx, nz: s.nz }, mats, style, signature + 157);
+                        placedType = type;
+                        placedInCell = true;
+                    } else {
+                        spawnSconce(root, { x: insetX, z: insetZ, nx: s.nx, nz: s.nz }, style, signature);
+                        placedType = 9;
+                        placedInCell = true;
+                    }
+
+                    if (placedInCell && Number.isInteger(placedType)) {
+                        placedTypeByCell.set(`${x},${y}`, placedType);
+                    }
+                }
+
+                if (opens === 2 && !placedInCell && fallbackSconce) {
+                    spawnSconce(root, { x: fallbackSconce.insetX, z: fallbackSconce.insetZ, nx: fallbackSconce.nx, nz: fallbackSconce.nz }, style, fallbackSconce.signature + 997);
+                    placedTypeByCell.set(`${x},${y}`, 9);
+                }
+            }
+        }
+    }
+
+    function chooseWallpaperFamily(x, y, axisTag) {
+        const zone = getZoneId(x, y);
+        return hash32(
+            zone.length,
+            zone.charCodeAt(0) || 0,
+            zone.charCodeAt(zone.length - 1) || 0,
+            axisTag + state.styleVariant * 17,
+        ) % 6;
+    }
+
+    function chooseWallpaperVariant(x, y, axisTag) {
+        const zone = getZoneId(x, y);
+        return hash32(
+            zone.charCodeAt(0) || 0,
+            zone.charCodeAt(zone.length - 1) || 0,
+            zone.length,
+            axisTag + state.styleVariant * 13,
+        ) % 8;
+    }
+
+    function chooseZoneVariant(x, y) {
+        return hash32(x >> 3, y >> 3, state.mazeSeed, state.styleVariant * 19) % 5;
+    }
+
+    function buildGeometry() {
+        if (state.sceneRoot) {
+            scene.remove(state.sceneRoot);
+        }
+        const root = new THREE.Group();
+        state.sceneRoot = root;
+        scene.add(root);
+
+        const style = state.style;
+        updateSceneLighting();
+
+        const floor = new THREE.Mesh(
+            new THREE.PlaneGeometry(state.cols * TILE + 6, state.rows * TILE + 6),
+            new THREE.MeshStandardMaterial({
+                color: 0xffffff,
+                map: getFloorAlbedoTexture(style),
+                normalMap: getFloorNormalTexture(style),
+                normalScale: new THREE.Vector2(0.16, 0.16),
+                roughnessMap: getFloorRoughnessTexture(style),
+                roughness: 0.82,
+                metalness: 0.03,
+            }),
+        );
+        floor.position.y = -0.02;
+        floor.rotation.x = -Math.PI / 2;
+        floor.receiveShadow = true;
+        root.add(floor);
+
+        const ceiling = new THREE.Mesh(
+            new THREE.PlaneGeometry(state.cols * TILE + 6, state.rows * TILE + 6),
+            new THREE.MeshStandardMaterial({
+                color: style.ceiling,
+                map: getPlasterTexture(style, 5 + state.styleVariant),
+                normalMap: getPlasterNormalTexture(style, 5 + state.styleVariant),
+                normalScale: new THREE.Vector2(0.12, 0.12),
+                roughnessMap: getPlasterRoughnessTexture(style, 5 + state.styleVariant),
+                roughness: 0.9,
+                metalness: 0.01,
+            }),
+        );
+        ceiling.position.y = WALL_H;
+        ceiling.rotation.x = Math.PI / 2;
+        ceiling.receiveShadow = true;
+        root.add(ceiling);
+
+        if (GEOMETRY_PROFILE === 'nuke') {
+            const wallDepth = 0.16;
+            const wallMat = new THREE.MeshBasicMaterial({ color: style.wall });
+
+            for (let y = 0; y < state.rows; y++) {
+                let x = 0;
+                while (x < state.cols) {
+                    const start = x;
+                    while (x < state.cols && state.grid[y][x] === 0 && isWall(x, y - 1)) x++;
+                    if (x > start) {
+                        const end = x - 1;
+                        const pStart = gridToWorld(start, y);
+                        const pEnd = gridToWorld(end, y);
+                        const runLen = (end - start + 1) * TILE;
+                        const wall = new THREE.Mesh(new THREE.BoxGeometry(runLen, WALL_H, wallDepth), wallMat);
+                        wall.position.set((pStart.x + pEnd.x) * 0.5, WALL_H * 0.5 - 0.01, pStart.z - TILE * 0.5);
+                        setShadowFlags(wall, false, true);
+                        root.add(wall);
+                    } else {
+                        x++;
+                    }
+                }
+
+                x = 0;
+                while (x < state.cols) {
+                    const start = x;
+                    while (x < state.cols && state.grid[y][x] === 0 && isWall(x, y + 1)) x++;
+                    if (x > start) {
+                        const end = x - 1;
+                        const pStart = gridToWorld(start, y);
+                        const pEnd = gridToWorld(end, y);
+                        const runLen = (end - start + 1) * TILE;
+                        const wall = new THREE.Mesh(new THREE.BoxGeometry(runLen, WALL_H, wallDepth), wallMat);
+                        wall.position.set((pStart.x + pEnd.x) * 0.5, WALL_H * 0.5 - 0.01, pStart.z + TILE * 0.5);
+                        setShadowFlags(wall, false, true);
+                        root.add(wall);
+                    } else {
+                        x++;
+                    }
+                }
+            }
+
+            for (let x = 0; x < state.cols; x++) {
+                let y = 0;
+                while (y < state.rows) {
+                    const start = y;
+                    while (y < state.rows && state.grid[y][x] === 0 && isWall(x - 1, y)) y++;
+                    if (y > start) {
+                        const end = y - 1;
+                        const pStart = gridToWorld(x, start);
+                        const pEnd = gridToWorld(x, end);
+                        const runLen = (end - start + 1) * TILE;
+                        const wall = new THREE.Mesh(new THREE.BoxGeometry(wallDepth, WALL_H, runLen), wallMat);
+                        wall.position.set(pStart.x - TILE * 0.5, WALL_H * 0.5 - 0.01, (pStart.z + pEnd.z) * 0.5);
+                        setShadowFlags(wall, false, true);
+                        root.add(wall);
+                    } else {
+                        y++;
+                    }
+                }
+
+                y = 0;
+                while (y < state.rows) {
+                    const start = y;
+                    while (y < state.rows && state.grid[y][x] === 0 && isWall(x + 1, y)) y++;
+                    if (y > start) {
+                        const end = y - 1;
+                        const pStart = gridToWorld(x, start);
+                        const pEnd = gridToWorld(x, end);
+                        const runLen = (end - start + 1) * TILE;
+                        const wall = new THREE.Mesh(new THREE.BoxGeometry(wallDepth, WALL_H, runLen), wallMat);
+                        wall.position.set(pStart.x + TILE * 0.5, WALL_H * 0.5 - 0.01, (pStart.z + pEnd.z) * 0.5);
+                        setShadowFlags(wall, false, true);
+                        root.add(wall);
+                    } else {
+                        y++;
+                    }
+                }
+            }
+
+            return;
+        }
+
+        const bandMaterials = GEOMETRY_DEBUG_NO_TEXTURES
+            ? {
+                wainscot: new THREE.MeshBasicMaterial({ color: blendHex(style.trim, style.woodDark, 0.22), side: THREE.DoubleSide }),
+                wallpaper: new THREE.MeshBasicMaterial({ color: blendHex(style.wall, 0xffffff, 0.06), side: THREE.DoubleSide }),
+                upper: new THREE.MeshBasicMaterial({ color: blendHex(style.upperWall, style.wall, 0.18), side: THREE.DoubleSide }),
+            }
+            : {
+                wainscot: new THREE.MeshStandardMaterial({
+                    color: style.trim,
+                    map: getWoodTexture(style, state.styleVariant + 17, 1),
+                    normalMap: getWoodNormalTexture(style, state.styleVariant + 17, 1),
+                    normalScale: new THREE.Vector2(0.18, 0.18),
+                    roughnessMap: getWoodRoughnessTexture(style, state.styleVariant + 17, 1),
+                    roughness: 0.8,
+                    metalness: 0.06,
+                    side: THREE.DoubleSide,
+                }),
+                wallpaper: new THREE.MeshStandardMaterial({
+                    color: blendHex(style.wall, 0xffffff, 0.08),
+                    roughness: 0.9,
+                    metalness: 0.02,
+                    side: THREE.DoubleSide,
+                }),
+                upper: new THREE.MeshStandardMaterial({
+                    color: blendHex(style.upperWall, style.wall, 0.16),
+                    map: getPlasterTexture(style, state.styleVariant + 9),
+                    normalMap: getPlasterNormalTexture(style, state.styleVariant + 9),
+                    normalScale: new THREE.Vector2(0.08, 0.08),
+                    roughnessMap: getPlasterRoughnessTexture(style, state.styleVariant + 9),
+                    roughness: 0.9,
+                    metalness: 0.01,
+                    side: THREE.DoubleSide,
+                }),
+            };
+
+        const bands = [
+            { h: WAINSCOT_H, y: WAINSCOT_H * 0.5 - 0.015, mat: bandMaterials.wainscot },
+            { h: WALLPAPER_H, y: WAINSCOT_H + WALLPAPER_H * 0.5 - 0.015, mat: bandMaterials.wallpaper },
+            { h: UPPER_WALL_H, y: WAINSCOT_H + WALLPAPER_H + UPPER_WALL_H * 0.5, mat: bandMaterials.upper },
+        ];
+
+        const emitHorizontal = (y, north, band) => {
+            let x = 0;
+            while (x < state.cols) {
+                const start = x;
+                while (x < state.cols && state.grid[y][x] === 0 && (north ? isWall(x, y - 1) : isWall(x, y + 1))) x++;
+                if (x > start) {
+                    const end = x - 1;
+                    const pStart = gridToWorld(start, y);
+                    const pEnd = gridToWorld(end, y);
+                    const runLen = (end - start + 1) * TILE;
+                    const wall = new THREE.Mesh(new THREE.PlaneGeometry(runLen, band.h), band.mat);
+                    wall.position.set((pStart.x + pEnd.x) * 0.5, band.y, pStart.z + (north ? -TILE * 0.5 : TILE * 0.5));
+                    wall.rotation.y = north ? Math.PI : 0;
+                    setShadowFlags(wall, false, true);
+                    root.add(wall);
+                } else {
+                    x++;
+                }
+            }
+        };
+
+        const emitVertical = (x, west, band) => {
+            let y = 0;
+            while (y < state.rows) {
+                const start = y;
+                while (y < state.rows && state.grid[y][x] === 0 && (west ? isWall(x - 1, y) : isWall(x + 1, y))) y++;
+                if (y > start) {
+                    const end = y - 1;
+                    const pStart = gridToWorld(x, start);
+                    const pEnd = gridToWorld(x, end);
+                    const runLen = (end - start + 1) * TILE;
+                    const wall = new THREE.Mesh(new THREE.PlaneGeometry(runLen, band.h), band.mat);
+                    wall.position.set(pStart.x + (west ? -TILE * 0.5 : TILE * 0.5), band.y, (pStart.z + pEnd.z) * 0.5);
+                    wall.rotation.y = west ? -Math.PI / 2 : Math.PI / 2;
+                    setShadowFlags(wall, false, true);
+                    root.add(wall);
+                } else {
+                    y++;
+                }
+            }
+        };
+
+
+        for (const band of bands) {
+            for (let y = 0; y < state.rows; y++) {
+                emitHorizontal(y, true, band);
+                emitHorizontal(y, false, band);
+            }
+            for (let x = 0; x < state.cols; x++) {
+                emitVertical(x, true, band);
+                emitVertical(x, false, band);
+            }
+        }
+
+        if (!GEOMETRY_DEBUG_NO_TEXTURES && TEXTURE_POLICY.decals) placeAgingDecals(root);
+
+        // Objective telegraph: key + halo
+        const keyObj = state.interactables.get('key');
+        if (keyObj && keyObj.state === 'active') {
+            const p = gridToWorld(keyObj.x, keyObj.y);
+            const faceDir = Number.isInteger(keyObj.faceDir) ? keyObj.faceDir : ((getDeadEndOpenDirection(keyObj.x, keyObj.y) + 2) % 4);
+            const wallNormal = DIRS[faceDir];
+            const wallX = p.x + wallNormal.x * (TILE * 0.43);
+            const wallZ = p.z + wallNormal.y * (TILE * 0.43);
+            const yaw = dirToYaw(faceDir);
+
+            const plaque = new THREE.Mesh(
+                new THREE.BoxGeometry(0.56, 0.56, 0.04),
+                new THREE.MeshStandardMaterial({ color: style.brass, emissive: style.brass, emissiveIntensity: 0.12, roughness: 0.35, metalness: 0.7 }),
+            );
+            plaque.position.set(wallX - wallNormal.x * 0.02, 1.18, wallZ - wallNormal.y * 0.02);
+            plaque.rotation.y = yaw;
+            root.add(plaque);
+
+            const keyMesh = new THREE.Mesh(
+                new THREE.TorusGeometry(0.22, 0.06, 12, 20),
+                new THREE.MeshStandardMaterial({ color: state.style.keyGlow, emissive: state.style.keyGlow, emissiveIntensity: 0.7, roughness: 0.25, metalness: 0.72 }),
+            );
+            keyMesh.position.set(wallX - wallNormal.x * 0.06, 1.18, wallZ - wallNormal.y * 0.06);
+            keyMesh.rotation.y = yaw;
+            setShadowFlags(keyMesh, false, false);
+            root.add(keyMesh);
+
+            const stem = new THREE.Mesh(
+                new THREE.BoxGeometry(0.09, 0.32, 0.03),
+                new THREE.MeshStandardMaterial({ color: state.style.keyGlow, emissive: state.style.keyGlow, emissiveIntensity: 0.65, roughness: 0.3, metalness: 0.68 }),
+            );
+            stem.position.set(wallX - wallNormal.x * 0.06, 0.94, wallZ - wallNormal.y * 0.06);
+            stem.rotation.y = yaw;
+            root.add(stem);
+
+            const keyGlow = new THREE.Mesh(
+                new THREE.PlaneGeometry(0.62, 0.62),
+                new THREE.MeshBasicMaterial({ color: state.style.keyGlow, transparent: true, opacity: 0.26, depthWrite: false }),
+            );
+            keyGlow.position.set(wallX - wallNormal.x * 0.2, 1.16, wallZ - wallNormal.y * 0.2);
+            keyGlow.rotation.y = yaw;
+            root.add(keyGlow);
+        }
+
+        // Objective telegraph: locked study door
+        const doorObj = state.interactables.get('study_door');
+        if (doorObj) {
+            const p = gridToWorld(doorObj.x, doorObj.y);
+            const faceDir = Number.isInteger(doorObj.faceDir)
+                ? doorObj.faceDir
+                : ((getDeadEndOpenDirection(doorObj.x, doorObj.y) + 2) % 4);
+            const wallNormal = DIRS[faceDir];
+            const inward = { x: -wallNormal.x, y: -wallNormal.y };
+            const tangent = { x: -wallNormal.y, y: wallNormal.x };
+            const yaw = dirToYaw(faceDir);
+            const wallX = p.x + wallNormal.x * (TILE * 0.43);
+            const wallZ = p.z + wallNormal.y * (TILE * 0.43);
+            const frameX = wallX - wallNormal.x * 0.03;
+            const frameZ = wallZ - wallNormal.y * 0.03;
+
+            const doorMat = new THREE.MeshStandardMaterial({
+                color: state.style.door,
+                map: getWoodTexture(style, state.styleVariant + 3, 29),
+                normalMap: getWoodNormalTexture(style, state.styleVariant + 3, 29),
+                normalScale: new THREE.Vector2(0.18, 0.18),
+                roughnessMap: getWoodRoughnessTexture(style, state.styleVariant + 3, 29),
+                roughness: 0.56,
+                metalness: 0.16,
+            });
+            const frameMat = new THREE.MeshStandardMaterial({
+                color: style.trim,
+                roughness: 0.74,
+                metalness: 0.08,
+                map: getWoodTexture(style, state.styleVariant + 3, 9),
+                normalMap: getWoodNormalTexture(style, state.styleVariant + 3, 9),
+                normalScale: new THREE.Vector2(0.12, 0.12),
+                roughnessMap: getWoodRoughnessTexture(style, state.styleVariant + 3, 9),
+            });
+            const frameTop = new THREE.Mesh(new THREE.BoxGeometry(TILE * 0.86, 0.16, 0.2), frameMat);
+            frameTop.position.set(frameX, 2.46, frameZ);
+            frameTop.rotation.y = yaw;
+            root.add(frameTop);
+            const frameLeft = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.44, 0.2), frameMat);
+            frameLeft.position.set(frameX - tangent.x * (TILE * 0.36), 1.22, frameZ - tangent.y * (TILE * 0.36));
+            frameLeft.rotation.y = yaw;
+            root.add(frameLeft);
+            const frameRight = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.44, 0.2), frameMat);
+            frameRight.position.set(frameX + tangent.x * (TILE * 0.36), 1.22, frameZ + tangent.y * (TILE * 0.36));
+            frameRight.rotation.y = yaw;
+            root.add(frameRight);
+
+            const doorX = frameX - wallNormal.x * 0.06;
+            const doorZ = frameZ - wallNormal.y * 0.06;
+
+            if (doorObj.state === 'active') {
+                const door = new THREE.Mesh(new THREE.BoxGeometry(TILE * 0.7, 2.34, 0.12), doorMat);
+                door.position.set(doorX, 1.17, doorZ);
+                door.rotation.y = yaw;
+                setShadowFlags(door, true, true);
+                root.add(door);
+                const panelTop = new THREE.Mesh(new THREE.BoxGeometry(TILE * 0.48, 0.72, 0.025), frameMat);
+                panelTop.position.set(doorX + inward.x * 0.07, 1.63, doorZ + inward.y * 0.07);
+                panelTop.rotation.y = yaw;
+                root.add(panelTop);
+                const panelBottom = new THREE.Mesh(new THREE.BoxGeometry(TILE * 0.5, 0.9, 0.025), frameMat);
+                panelBottom.position.set(doorX + inward.x * 0.07, 0.78, doorZ + inward.y * 0.07);
+                panelBottom.rotation.y = yaw;
+                root.add(panelBottom);
+                const handle = new THREE.Mesh(new THREE.SphereGeometry(0.04, 8, 8), new THREE.MeshStandardMaterial({ color: 0xd1b47a, roughness: 0.35, metalness: 0.8 }));
+                handle.position.set(doorX + tangent.x * (TILE * 0.22) + inward.x * 0.07, 1.16, doorZ + tangent.y * (TILE * 0.22) + inward.y * 0.07);
+                root.add(handle);
+                const lockPlate = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.12, 0.02), new THREE.MeshStandardMaterial({ color: style.brass, roughness: 0.35, metalness: 0.85 }));
+                lockPlate.position.set(doorX + tangent.x * (TILE * 0.22) + inward.x * 0.08, 1.16, doorZ + tangent.y * (TILE * 0.22) + inward.y * 0.08);
+                lockPlate.rotation.y = yaw;
+                root.add(lockPlate);
+            } else {
+                const openedDoor = new THREE.Mesh(new THREE.BoxGeometry(TILE * 0.7, 2.34, 0.12), doorMat);
+                openedDoor.position.set(doorX + tangent.x * (TILE * 0.25) + inward.x * 0.12, 1.17, doorZ + tangent.y * (TILE * 0.25) + inward.y * 0.12);
+                openedDoor.rotation.y = yaw - Math.PI / 3.3;
+                root.add(openedDoor);
+            }
+        }
+
+        placeWallDressings(root);
+    }
+
+    function isInteractAvailable() {
+        const keyObj = state.interactables.get('key');
+        if (keyObj && keyObj.state === 'active' && keyObj.x === state.player.x && keyObj.y === state.player.y) {
+            const keyFaceDir = Number.isInteger(keyObj.faceDir) ? keyObj.faceDir : ((getDeadEndOpenDirection(keyObj.x, keyObj.y) + 2) % 4);
+            if (state.player.dir === keyFaceDir) return true;
+        }
+
+        const f = getForwardCell();
+        if (keyObj && keyObj.state === 'active' && keyObj.x === f.x && keyObj.y === f.y) {
+            return true;
+        }
+
+        const doorObj = state.interactables.get('study_door');
+        if (doorObj && doorObj.state === 'active' && doorObj.x === f.x && doorObj.y === f.y) {
+            return true;
+        }
+        return false;
+    }
+
+    function postObjectiveState() {
+        const interactAvailable = isInteractAvailable();
+        try {
+            window.parent.postMessage({
+                type: 'MAZE_OBJECTIVE_STATE',
+                objective: state.objective.text,
+                status: state.objective.status,
+                hint: state.objective.hint,
+                interactAvailable,
+                layout: state.objectiveLayout,
+            }, '*');
+        } catch {
+            // ignore
+        }
+        hintEl.textContent = `Objective: ${state.objective.text} ${state.objective.hint ? ' | ' + state.objective.hint : ''}`;
+    }
+
+    function notifySessionRestart() {
+        try {
+            window.parent.postMessage({ type: 'EJS_SESSION_RESTART' }, '*');
+        } catch {
+            // Ignore failures
+        }
+        postObjectiveState();
+    }
+
+    function interact() {
+        if (isCameraTransitionActive()) return;
+        const keyObj = state.interactables.get('key');
+        if (keyObj && keyObj.state === 'active' && keyObj.x === state.player.x && keyObj.y === state.player.y) {
+            const keyFaceDir = Number.isInteger(keyObj.faceDir) ? keyObj.faceDir : ((getDeadEndOpenDirection(keyObj.x, keyObj.y) + 2) % 4);
+            if (state.player.dir === keyFaceDir) {
+                keyObj.interact(state);
+                updateCameraFromState();
+                return;
+            }
+            state.objective.hint = 'Face the wall-mounted key and press ENTER.';
+            postObjectiveState();
+            return;
+        }
+
+        const keyForward = getForwardCell();
+        if (keyObj && keyObj.state === 'active' && keyObj.x === keyForward.x && keyObj.y === keyForward.y) {
+            keyObj.interact(state);
+            updateCameraFromState();
+            return;
+        }
+
+        const f = getForwardCell();
+        const doorObj = state.interactables.get('study_door');
+        if (doorObj && doorObj.state === 'active' && doorObj.x === f.x && doorObj.y === f.y) {
+            doorObj.interact(state);
+            updateCameraFromState();
+            return;
+        }
+        state.objective.hint = 'Nothing to interact with here.';
+        postObjectiveState();
+    }
+
+    function moveForward() {
+        if (isCameraTransitionActive()) return;
+        const from = gridToWorld(state.player.x, state.player.y);
+        const yaw = dirToYaw(state.player.dir);
+        const f = getForwardCell();
+        if (!isWalkable(f.x, f.y)) return;
+        state.player.x = f.x;
+        state.player.y = f.y;
+        const to = gridToWorld(state.player.x, state.player.y);
+        startCameraTransition('forward', FORWARD_TRANSITION_MS, from, to, yaw, yaw);
+        playFootstep();
+        postObjectiveState();
+    }
+
+    function turnLeft() {
+        if (isCameraTransitionActive()) return;
+        const p = gridToWorld(state.player.x, state.player.y);
+        const startYaw = dirToYaw(state.player.dir);
+        state.player.dir = (state.player.dir + 3) % 4;
+        startCameraTransition('turn', TURN_TRANSITION_MS, p, p, startYaw, startYaw + (Math.PI / 2));
+        postObjectiveState();
+    }
+
+    function turnRight() {
+        if (isCameraTransitionActive()) return;
+        const p = gridToWorld(state.player.x, state.player.y);
+        const startYaw = dirToYaw(state.player.dir);
+        state.player.dir = (state.player.dir + 1) % 4;
+        startCameraTransition('turn', TURN_TRANSITION_MS, p, p, startYaw, startYaw - (Math.PI / 2));
+        postObjectiveState();
+    }
+
+    function turnBack() {
+        if (isCameraTransitionActive()) return;
+        const p = gridToWorld(state.player.x, state.player.y);
+        const startYaw = dirToYaw(state.player.dir);
+        state.player.dir = (state.player.dir + 2) % 4;
+        startCameraTransition('turn', BACK_TURN_TRANSITION_MS, p, p, startYaw, startYaw + Math.PI);
+        postObjectiveState();
+    }
+
+    function handleControl(index, value = 1) {
+        if (Number(value) !== 1) return;
+        if (!audioState.unlocked) {
+            markAudioEnabled();
+            void tryUnlockAudio();
+        }
+        if (Number(index) === INPUT_INDEX.FORWARD) moveForward();
+        else if (Number(index) === INPUT_INDEX.LEFT) turnLeft();
+        else if (Number(index) === INPUT_INDEX.RIGHT) turnRight();
+        else if (Number(index) === INPUT_INDEX.BACK) turnBack();
+        else if (Number(index) === INPUT_INDEX.ENTER || Number(index) === INPUT_INDEX.A) interact();
+    }
+
+    function isFullscreen() {
+        return document.fullscreenElement === container;
+    }
+
+    async function toggleFullscreen() {
+        try {
+            if (!isFullscreen()) {
+                await container.requestFullscreen();
+            } else {
+                await document.exitFullscreen();
+            }
+        } catch {
+            // ignore
+        }
+        updateFullscreenButton();
+        resize();
+    }
+
+    function updateFullscreenButton() {
+        fsToggle.textContent = isFullscreen() ? 'Exit Fullscreen' : 'Fullscreen';
+    }
+
+    const overlayElements = [muteToggle, fsToggle, hintEl];
+    let overlayFadeTimer = null;
+
+    function hideOverlays() {
+        for (const el of overlayElements) {
+            el.classList.remove('visible');
+        }
+    }
+
+    function showOverlaysFromPointer() {
+        for (const el of overlayElements) {
+            el.classList.add('visible');
+        }
+        if (overlayFadeTimer) {
+            clearTimeout(overlayFadeTimer);
+        }
+        overlayFadeTimer = setTimeout(() => {
+            overlayFadeTimer = null;
+            hideOverlays();
+        }, 2500);
+    }
+
+    function getRenderScale() {
+        return isFullscreen() ? 1 : 0.5;
+    }
+
+    function makeStaticGrainDataUrl(size = 128, seed = 1337) {
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d', { alpha: true });
+        const img = ctx.createImageData(size, size);
+        let s = seed >>> 0;
+        const rand = () => {
+            s = (s * 1664525 + 1013904223) >>> 0;
+            return (s >>> 24) / 255;
+        };
+        for (let i = 0; i < img.data.length; i += 4) {
+            const v = Math.floor(100 + rand() * 120);
+            const a = Math.floor(OVERLAY_TUNING.grainMinAlpha + rand() * OVERLAY_TUNING.grainAlphaRange);
+            img.data[i] = v;
+            img.data[i + 1] = v;
+            img.data[i + 2] = v;
+            img.data[i + 3] = a;
+        }
+        ctx.putImageData(img, 0, 0);
+        return canvas.toDataURL('image/png');
+    }
+
+    function resize() {
+        const cssW = Math.max(320, container.clientWidth || window.innerWidth || 320);
+        const cssH = Math.max(240, container.clientHeight || window.innerHeight || 240);
+        const dpr = Math.max(1, window.devicePixelRatio || 1);
+        const scale = getRenderScale();
+
+        let renderW = Math.max(1, Math.floor(cssW * dpr * scale));
+        let renderH = Math.max(1, Math.floor(cssH * dpr * scale));
+        const maxSide = Math.max(renderW, renderH);
+        if (maxSide > MAX_RENDER_SIDE) {
+            const clampScale = MAX_RENDER_SIDE / maxSide;
+            renderW = Math.max(1, Math.floor(renderW * clampScale));
+            renderH = Math.max(1, Math.floor(renderH * clampScale));
+        }
+
+        renderer.setSize(renderW, renderH, false);
+        renderer.domElement.style.width = `${cssW}px`;
+        renderer.domElement.style.height = `${cssH}px`;
+        renderer.setViewport(0, 0, renderW, renderH);
+        renderer.setScissor(0, 0, renderW, renderH);
+        renderer.setScissorTest(false);
+
+        if (crtPost.ready) {
+            crtPost.sceneTarget.setSize(renderW, renderH);
+            crtPost.lottesTarget.setSize(renderW, renderH);
+
+            crtPost.lottesMaterial.uniforms.uTextureSize.value.set(renderW, renderH);
+            crtPost.lottesMaterial.uniforms.uInputSize.value.set(renderW, renderH);
+            crtPost.lottesMaterial.uniforms.uOutputSize.value.set(renderW, renderH);
+            crtPost.lottesMaterial.uniforms.uInvTextureSize.value.set(1 / renderW, 1 / renderH);
+
+            crtPost.zfastMaterial.uniforms.uTextureSize.value.set(renderW, renderH);
+            crtPost.zfastMaterial.uniforms.uInvTextureSize.value.set(1 / renderW, 1 / renderH);
+        }
+
+        camera.aspect = cssW / cssH;
+        camera.clearViewOffset();
+        camera.updateProjectionMatrix();
+    }
+
+    function startNewMaze(seed, options = {}) {
+        if (options?.resetLevel) {
+            state.mazeLevel = 1;
+        } else if (options?.advanceLevel) {
+            state.mazeLevel = Math.max(1, state.mazeLevel + 1);
+        } else {
+            state.mazeLevel = Math.max(1, state.mazeLevel || 1);
+        }
+        const side = getMazeSideForLevel(state.mazeLevel);
+        state.cols = side;
+        state.rows = side;
+        reseed(seed);
+        chooseStyleProfile();
+        generateMaze();
+        setupObjectiveAndInteractables();
+        buildGeometry();
+        updateCameraFromState();
+        notifySessionRestart();
+    }
+
+    function handleMessage(event) {
+        const data = event.data;
+        if (!data || typeof data !== 'object') return;
+
+        if (data.type === 'MAZE_INIT') {
+            startNewMaze(Number(data.game?.seed) || Math.floor(Math.random() * 1000000000) + 1, { resetLevel: true });
+            return;
+        }
+
+        if (data.type === 'EJS_INPUT_TAP') {
+            handleControl(data.index, 1);
+            return;
+        }
+
+        if (data.type === 'EJS_INPUT_SET') {
+            handleControl(data.index, data.value);
+        }
+    }
+
+    function animate() {
+        updateCameraTransition(performance.now());
+        if (USE_CRT_ZFAST && crtPost.ready) {
+            renderer.setRenderTarget(crtPost.sceneTarget);
+            renderer.render(scene, camera);
+
+            renderer.setRenderTarget(crtPost.lottesTarget);
+            renderer.render(crtPost.lottesScene, crtPost.postCamera);
+
+            renderer.setRenderTarget(null);
+            renderer.render(crtPost.zfastScene, crtPost.postCamera);
+        } else {
+            renderer.render(scene, camera);
+        }
+        requestAnimationFrame(animate);
+    }
+
+    fsToggle.addEventListener('click', () => {
+        if (!audioState.unlocked) {
+            markAudioEnabled();
+            void tryUnlockAudio();
+        }
+        toggleFullscreen();
+    });
+    muteToggle.addEventListener('click', () => {
+        if (!audioState.unlocked) {
+            markAudioEnabled();
+            void tryUnlockAudio().then(() => {
+                audioState.bgmMuted = !audioState.bgmMuted;
+                applyBgmMuteState();
+                updateMuteButton();
+            });
+            return;
+        }
+        audioState.bgmMuted = !audioState.bgmMuted;
+        applyBgmMuteState();
+        updateMuteButton();
+    });
+    container.addEventListener('pointerdown', () => {
+        showOverlaysFromPointer();
+        if (!audioState.unlocked) {
+            markAudioEnabled();
+            void tryUnlockAudio();
+        }
+    }, { passive: true });
+    container.addEventListener('pointermove', showOverlaysFromPointer, { passive: true });
+    container.addEventListener('click', showOverlaysFromPointer, { passive: true });
+    container.addEventListener('touchstart', showOverlaysFromPointer, { passive: true });
+    window.addEventListener('resize', resize);
+    document.addEventListener('fullscreenchange', () => {
+        updateFullscreenButton();
+        resize();
+    });
+    window.addEventListener('message', handleMessage);
+
+    document.addEventListener('keydown', (event) => {
+        if (!audioState.unlocked) {
+            markAudioEnabled();
+            void tryUnlockAudio();
+        }
+        const key = event.key.toLowerCase();
+        if (event.key === 'ArrowUp' || key === 'w') {
+            moveForward();
+            event.preventDefault();
+        } else if (event.key === 'ArrowLeft' || key === 'a') {
+            turnLeft();
+            event.preventDefault();
+        } else if (event.key === 'ArrowRight' || key === 'd') {
+            turnRight();
+            event.preventDefault();
+        } else if (event.key === 'ArrowDown' || key === 's') {
+            turnBack();
+            event.preventDefault();
+        } else if (event.key === 'Enter') {
+            interact();
+            event.preventDefault();
+        }
+    });
+
+    updateFullscreenButton();
+    updateMuteButton();
+    hideOverlays();
+    if (USE_CRT_ZFAST) {
+        fxOverlay.style.display = 'none';
+    } else {
+        fxOverlay.style.display = 'block';
+        fxOverlay.style.setProperty('--fx-scanline-alpha', String(OVERLAY_TUNING.scanlineDarkAlpha));
+        fxOverlay.style.setProperty('--fx-vignette-alpha', String(OVERLAY_TUNING.vignetteAlpha));
+    }
+    initCrtPost();
+    void tryUnlockAudio();
+    resize();
+    (async () => {
+        await Promise.all([loadCustomArtworks(), loadCustomBgmTracks()]);
+        updateMuteButton();
+        ensureAudio();
+        startNewMaze(Math.floor(Math.random() * 1000000000) + 1, { resetLevel: true });
+        requestAnimationFrame(animate);
+    })();
+</script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+.mazegame_frame {
+    border: 1px solid var(--SmartThemeBorderColor);
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    aspect-ratio: 16/9;
+    position: relative;
+    border-radius: 4px;
+}
+
+

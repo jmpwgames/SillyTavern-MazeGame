@@ -1,0 +1,12 @@
+{
+    "display_name": "MazeGame",
+    "loading_order": 100,
+    "requires": [],
+    "optional": [],
+    "js": "plugin.js",
+    "css": "plugin.css",
+    "author": "OpenCode",
+    "version": "1.0.0",
+    "homePage": "",
+    "auto_update": false
+}
