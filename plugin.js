@@ -676,7 +676,44 @@ function renderMovementInstruction(template, allowedActions, maxActionsPerTick) 
         .replaceAll('{{allowed}}', allowedActions.join(', '));
 }
 
-function buildMovementPromptFromMemory(currentCaption, allowedActions, maxActionsPerTick, finalInstructionTemplate) {
+function prioritizeDirections(availableActions, lastAction, last4Actions, seed = 0) {
+    if (!availableActions.length) return availableActions;
+
+    const hasTurns = availableActions.includes('LEFT') || availableActions.includes('RIGHT');
+    const hasUp = availableActions.includes('UP');
+    const rand = seed ? (seed * 9301 % 100) / 100 : Math.random();
+
+    if (last4Actions === 'LRLR' || last4Actions === 'RLRL') {
+        if (availableActions.includes(lastAction)) {
+            return [lastAction, ...availableActions.filter(d => d !== lastAction)];
+        }
+    }
+
+    if (lastAction === 'UP' && hasTurns) {
+        const turns = [];
+        if (availableActions.includes('LEFT')) turns.push('LEFT');
+        if (availableActions.includes('RIGHT')) turns.push('RIGHT');
+
+        if (turns.length === 2 && rand < 0.5) {
+            turns.reverse();
+        }
+
+        const result = [...turns];
+        if (hasUp) result.push('UP');
+        for (const dir of availableActions) {
+            if (!result.includes(dir)) result.push(dir);
+        }
+        return result;
+    }
+
+    if (['LEFT', 'RIGHT'].includes(lastAction) && hasUp) {
+        return ['UP', ...availableActions.filter(d => d !== 'UP')];
+    }
+
+    return availableActions;
+}
+
+function buildMovementPromptFromMemory(currentCaption, allowedActions, maxActionsPerTick, finalInstructionTemplate, shuffleSeed = 0) {
     const allowedText = allowedActions.join(', ');
     const header = substituteParamsExtended(
         'You are controlling movement in "{{game}}" on {{core}}.\n' +
@@ -693,7 +730,8 @@ function buildMovementPromptFromMemory(currentCaption, allowedActions, maxAction
     const interactAvailable = mazeObjectiveState?.interactAvailable ? 'yes' : 'no';
     const doorInteractable = mazeObjectiveState?.doorInteractable ? 'yes' : 'no';
     const availableActions = mazeObjectiveState?.availableActions || [];
-    const availableDirsNote = availableActions.length > 0 ? `\nNote: Available directions: ${availableActions.join(', ')}.` : '';
+    const prioritizedAvailable = prioritizeDirections(availableActions, lastAction, last4Actions, shuffleSeed);
+    const availableDirsNote = prioritizedAvailable.length > 0 ? `\nNote: Available directions: ${prioritizedAvailable.join(', ')}.` : '';
 
     const objectiveBlock =
         `Current objective: ${objectiveText}\n` +
@@ -705,6 +743,13 @@ function buildMovementPromptFromMemory(currentCaption, allowedActions, maxAction
     const currentBlock = `Current scene caption (full):\n${String(currentCaption || 'No caption available.')}`;
 
     const entries = movementSessionMemory?.entries || [];
+    let lastAction = null;
+    let last4Actions = '';
+    if (entries.length > 0) {
+        lastAction = String(entries[entries.length - 1].action || '').split(',')[0].trim().toUpperCase();
+        const recent = entries.slice(-4);
+        last4Actions = recent.map(e => String(e.action || '').split(',')[0].trim().toUpperCase()).join('');
+    }
     const used = header.length + objectiveBlock.length + currentBlock.length + 240;
     const remaining = Math.max(0, MOVEMENT_CONTEXT_CHAR_BUDGET - used);
 
@@ -1246,7 +1291,7 @@ async function chooseMovementAction(base64Img, tick, allowedActions, maxActionsP
         }
 
         const cfg = getMovementConfig();
-        const prompt = buildMovementPromptFromMemory(caption || 'No caption available.', allowedActions, maxActionsPerTick, cfg.finalInstruction);
+        const prompt = buildMovementPromptFromMemory(caption || 'No caption available.', allowedActions, maxActionsPerTick, cfg.finalInstruction, tick);
         const reply = await generateMovementDecisionText(prompt, cfg);
         const parsed = parseAiActionPlan(reply, allowedActions, maxActionsPerTick);
         const actions = parsed.length ? parsed : [fallbackAiAction(tick, allowedActions)];
@@ -1696,6 +1741,11 @@ jQuery(async () => {
                                 <div><label for="mazegame_movement_step_delay">Inter-step Delay (ms)</label><input id="mazegame_movement_step_delay" type="number" class="text_pole wide100p" value="150" min="0" max="2000" step="10" /></div>
                                 <div><label for="mazegame_movement_max_actions">Actions Per Tick (max)</label><input id="mazegame_movement_max_actions" type="number" class="text_pole wide100p" value="4" min="1" max="12" step="1" /></div>
                                 <div><label for="mazegame_movement_start_delay">Startup Delay (seconds)</label><input id="mazegame_movement_start_delay" type="number" class="text_pole wide100p" value="20" min="0" max="120" step="1" /></div>
+                                <div>
+                                    <label for="mazegame_movement_temperature">Temperature <span id="mazegame_movement_temp_value">0.2</span></label>
+                                    <input id="mazegame_movement_temperature" type="range" class="wide100p" min="0" max="2" step="0.1" value="${defaultSettings.movementSamplerTemperature}" />
+                                    <small class="mg-sub">Higher = more creative/random choices</small>
+                                </div>
                             </div>
                         </div>
 
@@ -1836,6 +1886,15 @@ jQuery(async () => {
     $('#mazegame_movement_player').val(String(extension_settings.mazegame.movementPlayer ?? 0));
     $('#mazegame_movement_player').on('input change', function () {
         extension_settings.mazegame.movementPlayer = clampNumber($(this).val(), 0, 0, 1);
+        saveSettingsDebounced();
+    });
+    const savedTemp = extension_settings.mazegame.movementSamplerTemperature ?? defaultSettings.movementSamplerTemperature;
+    $('#mazegame_movement_temperature').val(savedTemp);
+    $('#mazegame_movement_temp_value').text(savedTemp.toFixed(1));
+    $('#mazegame_movement_temperature').on('input change', function () {
+        const val = parseFloat($(this).val()) || 0.2;
+        extension_settings.mazegame.movementSamplerTemperature = val;
+        $('#mazegame_movement_temp_value').text(val.toFixed(1));
         saveSettingsDebounced();
     });
     $('#mazegame_movement_interval').val(extension_settings.mazegame.movementIntervalSeconds);
