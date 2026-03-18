@@ -201,7 +201,7 @@
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.86;
+    renderer.toneMappingExposure = 3.25;
     renderer.shadowMap.enabled = false;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.setPixelRatio(1);
@@ -496,9 +496,10 @@
                 uLowLumScan: { value: 6.0 },
                 uHiLumScan: { value: 8.0 },
                 uScanOpacity: { value: 1.0 },
-                uScanlineStrength: { value: 0.15 },
-                uColorSteps: { value: 48.0 },
-                uDitherStrength: { value: 0.35 },
+                uScanlineStrength: { value: 0.225 },
+                uColorSteps: { value: 32.0 },
+                uDitherStrength: { value: 0.8 },
+                uVignette: { value: 0.7 },
             },
             vertexShader: `
                 varying vec2 vUv;
@@ -520,6 +521,7 @@
                 uniform float uScanlineStrength;
                 uniform float uColorSteps;
                 uniform float uDitherStrength;
+                uniform float uVignette;
 
                 float bayer4(vec2 p) {
                     vec2 f = mod(floor(p), 4.0);
@@ -572,6 +574,11 @@
                     float steps = max(2.0, uColorSteps);
                     float d = (bayer4(gl_FragCoord.xy) - 0.5) * (uDitherStrength / steps);
                     zfastScan = floor((zfastScan + d) * steps) / steps;
+
+                    // Vignette
+                    float dist = length(vUv - 0.5);
+                    float vignette = smoothstep(0.8, 0.3, dist * 1.5);
+                    zfastScan *= mix(1.0, vignette, uVignette);
 
                     gl_FragColor = vec4(mix(original, zfastScan, clamp(uScanOpacity, 0.0, 1.0)), 1.0);
                 }
@@ -827,10 +834,10 @@
 
     function updateSceneLighting() {
         ambientLight.color.setHex(state.style.ambientLight || 0x8d98a7);
-        ambientLight.intensity = 0.75;
+        ambientLight.intensity = 1.35;
         keyLight.color.setHex(state.style.practicalLight || 0xffdab4);
-        keyLight.intensity = 1.425;
-        hemiLight.intensity = 0.42;
+        keyLight.intensity = 2.5;
+        hemiLight.intensity = 0.75;
         scene.fog.color.setHex(0x3a3633);
         scene.fog.near = 24;
         scene.fog.far = 98;
@@ -1277,7 +1284,7 @@
         const key = `${style.name}-${variant}-${axisTag}`;
         if (woodCache.has(key)) return woodCache.get(key);
         const tex = makeCanvasTexture((g, w, h) => {
-            g.fillStyle = shadeHex(style.trim, -10);
+            g.fillStyle = shadeHex(style.trim, +8);
             g.fillRect(0, 0, w, h);
             const grain = shadeHex(style.woodDark, 14);
             g.strokeStyle = grain;
@@ -2668,9 +2675,9 @@
                 color: 0xffffff,
                 map: getFloorAlbedoTexture(style),
                 normalMap: getFloorNormalTexture(style),
-                normalScale: new THREE.Vector2(0.16, 0.16),
+                normalScale: new THREE.Vector2(0.24, 0.24),
                 roughnessMap: getFloorRoughnessTexture(style),
-                roughness: 0.82,
+                roughness: 0.78,
                 metalness: 0.03,
             }),
         );
@@ -2685,9 +2692,9 @@
                 color: style.ceiling,
                 map: getPlasterTexture(style, 5 + state.styleVariant),
                 normalMap: getPlasterNormalTexture(style, 5 + state.styleVariant),
-                normalScale: new THREE.Vector2(0.12, 0.12),
+                normalScale: new THREE.Vector2(0.16, 0.16),
                 roughnessMap: getPlasterRoughnessTexture(style, 5 + state.styleVariant),
-                roughness: 0.9,
+                roughness: 0.88,
                 metalness: 0.01,
             }),
         );
@@ -2790,15 +2797,19 @@
                     color: style.trim,
                     map: getWoodTexture(style, state.styleVariant + 17, 1),
                     normalMap: getWoodNormalTexture(style, state.styleVariant + 17, 1),
-                    normalScale: new THREE.Vector2(0.18, 0.18),
+                    normalScale: new THREE.Vector2(0.28, 0.28),
                     roughnessMap: getWoodRoughnessTexture(style, state.styleVariant + 17, 1),
-                    roughness: 0.8,
+                    roughness: 0.78,
                     metalness: 0.06,
                     side: THREE.DoubleSide,
                 }),
                 wallpaper: new THREE.MeshStandardMaterial({
                     color: blendHex(style.wall, 0xffffff, 0.08),
-                    roughness: 0.9,
+                    map: getPlasterTexture(style, state.styleVariant + 3),
+                    normalMap: getPlasterNormalTexture(style, state.styleVariant + 3),
+                    normalScale: new THREE.Vector2(0.2, 0.2),
+                    roughnessMap: getPlasterRoughnessTexture(style, state.styleVariant + 3),
+                    roughness: 0.88,
                     metalness: 0.02,
                     side: THREE.DoubleSide,
                 }),
@@ -2806,7 +2817,7 @@
                     color: blendHex(style.upperWall, style.wall, 0.16),
                     map: getPlasterTexture(style, state.styleVariant + 9),
                     normalMap: getPlasterNormalTexture(style, state.styleVariant + 9),
-                    normalScale: new THREE.Vector2(0.08, 0.08),
+                    normalScale: new THREE.Vector2(0.16, 0.16),
                     roughnessMap: getPlasterRoughnessTexture(style, state.styleVariant + 9),
                     roughness: 0.9,
                     metalness: 0.01,
@@ -3046,21 +3057,54 @@
         return false;
     }
 
+
+    function getAvailableActions() {
+        const actions = [];
+        // Forward
+        const f = getForwardCell();
+        if (isWalkable(f.x, f.y)) actions.push('UP');
+
+        // Left
+        const leftDir = (state.player.dir + 3) % 4;
+        const l = { x: state.player.x, y: state.player.y };
+        if (leftDir === 0) l.y--;
+        else if (leftDir === 1) l.x++;
+        else if (leftDir === 2) l.y++;
+        else if (leftDir === 3) l.x--;
+        if (isWalkable(l.x, l.y)) actions.push('LEFT');
+
+        // Right
+        const rightDir = (state.player.dir + 1) % 4;
+        const r = { x: state.player.x, y: state.player.y };
+        if (rightDir === 0) r.y--;
+        else if (rightDir === 1) r.x++;
+        else if (rightDir === 2) r.y++;
+        else if (rightDir === 3) r.x--;
+        if (isWalkable(r.x, r.y)) actions.push('RIGHT');
+
+        return actions;
+    }
+
     function postObjectiveState() {
         const interactAvailable = isInteractAvailable();
+        const availableActions = getAvailableActions();
+        const doorObj = state.interactables.get('study_door');
+        const doorInteractable = (doorObj && doorObj.state === 'active' && state.objective?.keyCollected);
         try {
             window.parent.postMessage({
                 type: 'MAZE_OBJECTIVE_STATE',
-                objective: state.objective.text,
-                status: state.objective.status,
-                hint: state.objective.hint,
+                objective: state.objective?.text,
+                status: state.objective?.status,
+                hint: state.objective?.hint,
                 interactAvailable,
+                doorInteractable,
+                availableActions,
                 layout: state.objectiveLayout,
             }, '*');
         } catch {
             // ignore
         }
-        hintEl.textContent = `Objective: ${state.objective.text} ${state.objective.hint ? ' | ' + state.objective.hint : ''}`;
+        hintEl.textContent = `Objective: ${state.objective?.text || ''} ${state.objective?.hint ? ' | ' + state.objective.hint : ''}`;
     }
 
     function notifySessionRestart() {
@@ -3116,6 +3160,22 @@
         gain.connect(bloopContext.destination);
         osc.type = 'sine';
         osc.frequency.setValueAtTime(220, bloopContext.currentTime);
+        gain.gain.setValueAtTime(0.585, bloopContext.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, bloopContext.currentTime + 0.1);
+        osc.start();
+        osc.stop(bloopContext.currentTime + 0.1);
+    }
+
+    function playEnterBloop() {
+        if (!audioState.unlocked) return;
+        if (!bloopContext) bloopContext = new (window.AudioContext || window.webkitAudioContext)();
+        if (bloopContext.state === 'suspended') bloopContext.resume();
+        const osc = bloopContext.createOscillator();
+        const gain = bloopContext.createGain();
+        osc.connect(gain);
+        gain.connect(bloopContext.destination);
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(440, bloopContext.currentTime);
         gain.gain.setValueAtTime(0.585, bloopContext.currentTime);
         gain.gain.exponentialRampToValueAtTime(0.0001, bloopContext.currentTime + 0.1);
         osc.start();
@@ -3334,6 +3394,29 @@
 
         if (data.type === 'EJS_INPUT_SET') {
             handleControl(data.index, data.value);
+            return;
+        }
+
+        if (data.type === 'SHADER_SETTINGS_UPDATE') {
+            if (crtPost.zfastMaterial && crtPost.zfastMaterial.uniforms) {
+                if (data.shaderScanlineStrength !== undefined) {
+                    crtPost.zfastMaterial.uniforms.uScanlineStrength.value = data.shaderScanlineStrength;
+                }
+                if (data.shaderDitherStrength !== undefined) {
+                    crtPost.zfastMaterial.uniforms.uDitherStrength.value = data.shaderDitherStrength;
+                }
+                if (data.shaderColorSteps !== undefined) {
+                    crtPost.zfastMaterial.uniforms.uColorSteps.value = data.shaderColorSteps;
+                }
+                if (data.shaderVignette !== undefined) {
+                    crtPost.zfastMaterial.uniforms.uVignette.value = data.shaderVignette;
+                }
+            }
+            if (data.shaderVignette !== undefined) {
+                OVERLAY_TUNING.vignetteAlpha = data.shaderVignette;
+                fxOverlay.style.setProperty('--fx-vignette-alpha', String(data.shaderVignette));
+            }
+            return;
         }
     }
 
@@ -3411,6 +3494,7 @@
             turnBack();
             event.preventDefault();
         } else if (event.key === 'Enter') {
+            playEnterBloop();
             interact();
             event.preventDefault();
         }

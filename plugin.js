@@ -72,6 +72,10 @@ const defaultSettings = {
     globalDefaultControlSettings: null,
     globalDefaultCoreSettings: null,
     globalDefaultCheats: null,
+    shaderScanlineStrength: 0.225,
+    shaderDitherStrength: 0.8,
+    shaderColorSteps: 32.0,
+    shaderVignette: 0.7,
 };
 
 const MANSION_MIGRATION_VERSION = 1;
@@ -687,11 +691,15 @@ function buildMovementPromptFromMemory(currentCaption, allowedActions, maxAction
     const objectiveStatus = String(mazeObjectiveState?.status || 'active');
     const objectiveHint = String(mazeObjectiveState?.hint || '');
     const interactAvailable = mazeObjectiveState?.interactAvailable ? 'yes' : 'no';
+    const doorInteractable = mazeObjectiveState?.doorInteractable ? 'yes' : 'no';
+    const availableActions = mazeObjectiveState?.availableActions || [];
+    const availableDirsNote = availableActions.length > 0 ? `\nNote: Available directions: ${availableActions.join(', ')}.` : '';
 
     const objectiveBlock =
         `Current objective: ${objectiveText}\n` +
         `Objective status: ${objectiveStatus}\n` +
         `Interaction available now: ${interactAvailable}\n` +
+        (doorInteractable === 'yes' ? 'Note: You have collected the key and the study door is now interactable.\n' : '') +
         (objectiveHint ? `Objective hint: ${objectiveHint}` : '');
 
     const currentBlock = `Current scene caption (full):\n${String(currentCaption || 'No caption available.')}`;
@@ -719,7 +727,16 @@ function buildMovementPromptFromMemory(currentCaption, allowedActions, maxAction
         : 'Previous ticks: none';
 
     const finalInstruction = renderMovementInstruction(finalInstructionTemplate, allowedActions, maxActionsPerTick);
-    return `${header}\n\n${objectiveBlock}\n\n${currentBlock}\n\n${historyBlock}\n\n${finalInstruction}`;
+
+    let stuckBlock = '';
+    if (entries.length > 0) {
+        const lastEntry = entries[entries.length - 1];
+        if (lastEntry.captionFull === currentCaption) {
+            stuckBlock = '\nNote: You are currently stuck and cannot move forward, try turning in a direction without obstruction.';
+        }
+    }
+
+    return `${header}\n\n${historyBlock}\n\n${currentBlock}\n\n${objectiveBlock}\n\n${finalInstruction}${availableDirsNote}${stuckBlock}`;
 }
 
 const cores = {
@@ -1359,6 +1376,8 @@ async function setupCoopMovementWorker(frameElement) {
                     status: String(event.data?.status || mazeObjectiveState.status || 'active'),
                     hint: String(event.data?.hint || ''),
                     interactAvailable: !!event.data?.interactAvailable,
+                    doorInteractable: !!event.data?.doorInteractable,
+                    availableActions: event.data?.availableActions || [],
                     layout: safeLayout,
                 };
             }
@@ -1527,6 +1546,11 @@ async function startEmulator() {
     frameInstance.on('load', async () => {
         const frameElement = frameInstance[0];
         if (!(frameElement instanceof HTMLIFrameElement)) return;
+        
+        // Let the frame set its own ID to be picked up by sendShaderSettingsToEmulator
+        frameElement.id = 'mazegame_frame';
+        sendShaderSettingsToEmulator();
+        
         frameElement.contentWindow?.postMessage({ type: 'MAZE_INIT', game }, '*');
         clearTimeout(commentTimer);
         clearTimeout(movementTimer);
@@ -1703,6 +1727,16 @@ jQuery(async () => {
                                     <label for="mazegame_movement_stop_chat" class="checkbox_label"><input id="mazegame_movement_stop_chat" type="checkbox" /><span>Stop AI On Chat Change</span></label>
                                     <label for="mazegame_movement_stop_pause" class="checkbox_label"><input id="mazegame_movement_stop_pause" type="checkbox" /><span>Stop AI When Emulator Paused</span></label>
                                 </div>
+                            </div>
+                        </div>
+
+                        <div class="mg-card">
+                            <div class="mg-title">Shader Effects</div>
+                            <div class="mg-grid2">
+                                <div><label for="mazegame_shader_scanline">Scanline Strength</label><input id="mazegame_shader_scanline" type="number" class="text_pole wide100p" value="${defaultSettings.shaderScanlineStrength}" min="0" max="1" step="0.01" /></div>
+                                <div><label for="mazegame_shader_dither">Dither Strength</label><input id="mazegame_shader_dither" type="number" class="text_pole wide100p" value="${defaultSettings.shaderDitherStrength}" min="0" max="2" step="0.05" /></div>
+                                <div><label for="mazegame_shader_color_steps">Color Steps (Banding)</label><input id="mazegame_shader_color_steps" type="number" class="text_pole wide100p" value="${defaultSettings.shaderColorSteps}" min="2" max="256" step="1" /></div>
+                                <div><label for="mazegame_shader_vignette">Vignette Alpha</label><input id="mazegame_shader_vignette" type="number" class="text_pole wide100p" value="${defaultSettings.shaderVignette}" min="0" max="1" step="0.05" /></div>
                             </div>
                         </div>
 
@@ -1905,6 +1939,51 @@ jQuery(async () => {
         extension_settings.mazegame.forceCaptions = $(this).prop('checked');
         saveSettingsDebounced();
     });
+
+    $('#mazegame_shader_scanline').val(extension_settings.mazegame.shaderScanlineStrength ?? defaultSettings.shaderScanlineStrength);
+    $('#mazegame_shader_scanline').on('input change', function () {
+        extension_settings.mazegame.shaderScanlineStrength = Number($(this).val());
+        saveSettingsDebounced();
+        sendShaderSettingsToEmulator();
+    });
+
+    $('#mazegame_shader_dither').val(extension_settings.mazegame.shaderDitherStrength ?? defaultSettings.shaderDitherStrength);
+    $('#mazegame_shader_dither').on('input change', function () {
+        extension_settings.mazegame.shaderDitherStrength = Number($(this).val());
+        saveSettingsDebounced();
+        sendShaderSettingsToEmulator();
+    });
+
+    $('#mazegame_shader_color_steps').val(extension_settings.mazegame.shaderColorSteps ?? defaultSettings.shaderColorSteps);
+    $('#mazegame_shader_color_steps').on('input change', function () {
+        extension_settings.mazegame.shaderColorSteps = Number($(this).val());
+        saveSettingsDebounced();
+        sendShaderSettingsToEmulator();
+    });
+
+    $('#mazegame_shader_vignette').val(extension_settings.mazegame.shaderVignette ?? defaultSettings.shaderVignette);
+    $('#mazegame_shader_vignette').on('input change', function () {
+        extension_settings.mazegame.shaderVignette = Number($(this).val());
+        saveSettingsDebounced();
+        sendShaderSettingsToEmulator();
+    });
+
     updateRuntimeModeUI();
     updateMovementDebugUI();
 });
+
+function sendShaderSettingsToEmulator() {
+    const frameElement = document.getElementById('mazegame_frame');
+    if (!frameElement || !frameElement.contentWindow) return;
+    try {
+        frameElement.contentWindow.postMessage({
+            type: 'SHADER_SETTINGS_UPDATE',
+            shaderScanlineStrength: extension_settings.mazegame.shaderScanlineStrength ?? defaultSettings.shaderScanlineStrength,
+            shaderDitherStrength: extension_settings.mazegame.shaderDitherStrength ?? defaultSettings.shaderDitherStrength,
+            shaderColorSteps: extension_settings.mazegame.shaderColorSteps ?? defaultSettings.shaderColorSteps,
+            shaderVignette: extension_settings.mazegame.shaderVignette ?? defaultSettings.shaderVignette,
+        }, '*');
+    } catch {
+        // ignore
+    }
+}
