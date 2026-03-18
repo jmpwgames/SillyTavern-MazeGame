@@ -729,6 +729,15 @@ function buildMovementPromptFromMemory(currentCaption, allowedActions, maxAction
     const objectiveHint = String(mazeObjectiveState?.hint || '');
     const interactAvailable = mazeObjectiveState?.interactAvailable ? 'yes' : 'no';
     const doorInteractable = mazeObjectiveState?.doorInteractable ? 'yes' : 'no';
+    const entries = movementSessionMemory?.entries || [];
+    let lastAction = null;
+    let last4Actions = '';
+    if (entries.length > 0) {
+        lastAction = String(entries[entries.length - 1].action || '').split(',')[0].trim().toUpperCase();
+        const recent = entries.slice(-4);
+        last4Actions = recent.map(e => String(e.action || '').split(',')[0].trim().toUpperCase()).join('');
+    }
+
     const availableActions = mazeObjectiveState?.availableActions || [];
     const prioritizedAvailable = prioritizeDirections(availableActions, lastAction, last4Actions, shuffleSeed);
     const availableDirsNote = prioritizedAvailable.length > 0 ? `\nNote: Available directions: ${prioritizedAvailable.join(', ')}.` : '';
@@ -742,14 +751,6 @@ function buildMovementPromptFromMemory(currentCaption, allowedActions, maxAction
 
     const currentBlock = `Current scene caption (full):\n${String(currentCaption || 'No caption available.')}`;
 
-    const entries = movementSessionMemory?.entries || [];
-    let lastAction = null;
-    let last4Actions = '';
-    if (entries.length > 0) {
-        lastAction = String(entries[entries.length - 1].action || '').split(',')[0].trim().toUpperCase();
-        const recent = entries.slice(-4);
-        last4Actions = recent.map(e => String(e.action || '').split(',')[0].trim().toUpperCase()).join('');
-    }
     const used = header.length + objectiveBlock.length + currentBlock.length + 240;
     const remaining = Math.max(0, MOVEMENT_CONTEXT_CHAR_BUDGET - used);
 
