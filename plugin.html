@@ -1229,17 +1229,17 @@
         return tex;
     }
 
-    function getWallpaperNormalTexture(style, family, variant, orientTag, zoneVariant) {
+    function getWallpaperNormalTexture(cellX, cellY, style, family, variant, orientTag, zoneVariant) {
         if (!TEXTURE_POLICY.wallpaper) return null;
-        const key = `${style.name}-${family}-${variant}-${orientTag}-${zoneVariant}`;
+        const key = `${style.name}-${family}-${variant}-${orientTag}-${zoneVariant}-${cellX % 16}-${cellY % 16}`;
         if (wallpaperNormalCache.has(key)) return wallpaperNormalCache.get(key);
         const tex = makeLinearCanvasTexture((g, w, h) => {
             g.fillStyle = 'rgb(128,128,255)';
             g.fillRect(0, 0, w, h);
             g.globalAlpha = 0.2;
             for (let i = 0; i < 180; i++) {
-                const x = (i * 17 + variant * 13 + zoneVariant * 19) % w;
-                const y = (i * 31 + family * 23 + orientTag * 11) % h;
+                const x = (i * 17 + variant * 13 + zoneVariant * 19 + (cellX * 11) + (cellY * 7)) % w;
+                const y = (i * 31 + family * 23 + orientTag * 11 + (cellX * 5) + (cellY * 3)) % h;
                 g.fillStyle = i % 2 ? 'rgb(136,120,255)' : 'rgb(120,136,255)';
                 g.fillRect(x, y, 2, 1);
             }
@@ -1250,17 +1250,17 @@
         return tex;
     }
 
-    function getWallpaperRoughnessTexture(style, family, variant, orientTag, zoneVariant) {
+    function getWallpaperRoughnessTexture(cellX, cellY, style, family, variant, orientTag, zoneVariant) {
         if (!TEXTURE_POLICY.wallpaper) return null;
-        const key = `${style.name}-${family}-${variant}-${orientTag}-${zoneVariant}`;
+        const key = `${style.name}-${family}-${variant}-${orientTag}-${zoneVariant}-${cellX % 16}-${cellY % 16}`;
         if (wallpaperRoughnessCache.has(key)) return wallpaperRoughnessCache.get(key);
         const tex = makeLinearCanvasTexture((g, w, h) => {
             g.fillStyle = 'rgb(186,186,186)';
             g.fillRect(0, 0, w, h);
             g.globalAlpha = 0.45;
             for (let i = 0; i < 220; i++) {
-                const x = (i * 19 + family * 37) % w;
-                const y = (i * 29 + variant * 17 + zoneVariant * 7) % h;
+                const x = (i * 19 + family * 37 + (cellX * 9) + (cellY * 3)) % w;
+                const y = (i * 29 + variant * 17 + zoneVariant * 7 + (cellX * 5) + (cellY * 11)) % h;
                 const s = 1 + (i % 2);
                 g.fillStyle = i % 3 ? 'rgb(160,160,160)' : 'rgb(210,210,210)';
                 g.fillRect(x, y, s, s);
@@ -2827,14 +2827,27 @@
                 while (x < state.cols && state.grid[y][x] === 0 && (north ? isWall(x, y - 1) : isWall(x, y + 1))) x++;
                 if (x > start) {
                     const end = x - 1;
-                    const pStart = gridToWorld(start, y);
-                    const pEnd = gridToWorld(end, y);
                     const runLen = (end - start + 1) * TILE;
-                    const wall = new THREE.Mesh(new THREE.PlaneGeometry(runLen, band.h), band.mat);
-                    wall.position.set((pStart.x + pEnd.x) * 0.5, band.y, pStart.z + (north ? -TILE * 0.5 : TILE * 0.5));
-                    wall.rotation.y = north ? Math.PI : 0;
-                    setShadowFlags(wall, false, true);
-                    root.add(wall);
+                    
+                    for (let i = start; i <= end; i++) {
+                        let mat = band.mat;
+                        if (band === bands[1]) {
+                            const family = chooseWallpaperFamily(i, y, north ? 0 : 2);
+                            const variant = chooseWallpaperVariant(i, y, north ? 0 : 2);
+                            const zoneVariant = chooseZoneVariant(i, y);
+                            mat = mat.clone();
+                            mat.map = getWallpaperTexture(style, family, variant, north ? 0 : 2, zoneVariant);
+                            mat.normalMap = getWallpaperNormalTexture(i, y, style, family, variant, north ? 0 : 2, zoneVariant);
+                            mat.roughnessMap = getWallpaperRoughnessTexture(i, y, style, family, variant, north ? 0 : 2, zoneVariant);
+                        }
+
+                        const pStart = gridToWorld(i, y);
+                        const wall = new THREE.Mesh(new THREE.PlaneGeometry(TILE, band.h), mat);
+                        wall.position.set(pStart.x, band.y, pStart.z + (north ? -TILE * 0.5 : TILE * 0.5));
+                        wall.rotation.y = north ? Math.PI : 0;
+                        setShadowFlags(wall, false, true);
+                        root.add(wall);
+                    }
                 } else {
                     x++;
                 }
@@ -2848,14 +2861,26 @@
                 while (y < state.rows && state.grid[y][x] === 0 && (west ? isWall(x - 1, y) : isWall(x + 1, y))) y++;
                 if (y > start) {
                     const end = y - 1;
-                    const pStart = gridToWorld(x, start);
-                    const pEnd = gridToWorld(x, end);
-                    const runLen = (end - start + 1) * TILE;
-                    const wall = new THREE.Mesh(new THREE.PlaneGeometry(runLen, band.h), band.mat);
-                    wall.position.set(pStart.x + (west ? -TILE * 0.5 : TILE * 0.5), band.y, (pStart.z + pEnd.z) * 0.5);
-                    wall.rotation.y = west ? -Math.PI / 2 : Math.PI / 2;
-                    setShadowFlags(wall, false, true);
-                    root.add(wall);
+                    
+                    for (let i = start; i <= end; i++) {
+                        let mat = band.mat;
+                        if (band === bands[1]) {
+                            const family = chooseWallpaperFamily(x, i, west ? 1 : 3);
+                            const variant = chooseWallpaperVariant(x, i, west ? 1 : 3);
+                            const zoneVariant = chooseZoneVariant(x, i);
+                            mat = mat.clone();
+                            mat.map = getWallpaperTexture(style, family, variant, west ? 1 : 3, zoneVariant);
+                            mat.normalMap = getWallpaperNormalTexture(x, i, style, family, variant, west ? 1 : 3, zoneVariant);
+                            mat.roughnessMap = getWallpaperRoughnessTexture(x, i, style, family, variant, west ? 1 : 3, zoneVariant);
+                        }
+
+                        const pStart = gridToWorld(x, i);
+                        const wall = new THREE.Mesh(new THREE.PlaneGeometry(TILE, band.h), mat);
+                        wall.position.set(pStart.x + (west ? -TILE * 0.5 : TILE * 0.5), band.y, pStart.z);
+                        wall.rotation.y = west ? -Math.PI / 2 : Math.PI / 2;
+                        setShadowFlags(wall, false, true);
+                        root.add(wall);
+                    }
                 } else {
                     y++;
                 }
@@ -3080,12 +3105,40 @@
         postObjectiveState();
     }
 
+    let bloopContext = null;
+    function playBloop() {
+        if (!audioState.unlocked) return;
+        if (!bloopContext) bloopContext = new (window.AudioContext || window.webkitAudioContext)();
+        if (bloopContext.state === 'suspended') bloopContext.resume();
+        const osc = bloopContext.createOscillator();
+        const gain = bloopContext.createGain();
+        osc.connect(gain);
+        gain.connect(bloopContext.destination);
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(220, bloopContext.currentTime);
+        gain.gain.setValueAtTime(0.585, bloopContext.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, bloopContext.currentTime + 0.1);
+        osc.start();
+        osc.stop(bloopContext.currentTime + 0.1);
+    }
+
+    function triggerCollisionBump() {
+        if (isCameraTransitionActive()) return;
+        const p = gridToWorld(state.player.x, state.player.y);
+        const yaw = dirToYaw(state.player.dir);
+        startCameraTransition('forward', 200, p, p, yaw, yaw);
+    }
+
     function moveForward() {
         if (isCameraTransitionActive()) return;
         const from = gridToWorld(state.player.x, state.player.y);
         const yaw = dirToYaw(state.player.dir);
         const f = getForwardCell();
-        if (!isWalkable(f.x, f.y)) return;
+        if (!isWalkable(f.x, f.y)) {
+            triggerCollisionBump();
+            playBloop();
+            return;
+        }
         state.player.x = f.x;
         state.player.y = f.y;
         const to = gridToWorld(state.player.x, state.player.y);

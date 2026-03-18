@@ -48,7 +48,6 @@ const defaultSettings = {
     movementCommentEveryTicks: 4,
     movementUseCommentPrompt: true,
     movementUseCaptionPrompt: true,
-    movementApiServerUrl: '',
     movementSamplerTemperature: 0.2,
     movementSamplerTopP: 1,
     movementSamplerTopK: 1,
@@ -62,7 +61,6 @@ const defaultSettings = {
     movementSamplerRepetitionPenalty: 1,
     movementFallbackMode: 'clockwise',
     movementLoopBreakEnabled: true,
-    movementStopOnChatChange: true,
     movementStopWhenPaused: true,
     movementSystemPrompt: 'You are a game controller. Output only allowed action tokens and nothing else.',
     movementFinalInstruction: 'Return 1 to {{max}} comma-separated actions from the allowed set only: {{allowed}}.',
@@ -160,7 +158,7 @@ function getMovementConfig() {
     return {
         enabled: !!s.movementEnabled,
         player: clampNumber(s.movementPlayer, 0, 0, 1),
-        intervalMs: clampNumber(s.movementIntervalSeconds, MOVEMENT_TICK_MS / 1000, 5, 120) * 1000,
+        intervalMs: clampNumber(s.movementIntervalSeconds, MOVEMENT_TICK_MS / 1000, 0, 3600) * 1000,
         holdMs: clampNumber(s.movementHoldMs, MOVEMENT_HOLD_MS, 50, 1000),
         stepDelayMs: clampNumber(s.movementStepDelayMs, 150, 0, 2000),
         maxActionsPerTick: clampNumber(s.movementMaxActionsPerTick, 4, 1, 12),
@@ -168,9 +166,21 @@ function getMovementConfig() {
         commentEnabled: !!s.movementCommentEnabled,
         commentEveryTicks: clampNumber(s.movementCommentEveryTicks, COMMENT_EVERY_TICKS, 1, 20),
         apiServerUrl: String(s.movementApiServerUrl || '').trim(),
+        sampler: {
+            temperature: clampNumber(s.movementSamplerTemperature ?? 0.2, 0.2, 0, 2),
+            topP: clampNumber(s.movementSamplerTopP ?? 1, 1, 0, 1),
+            topK: clampNumber(s.movementSamplerTopK ?? 1, 1, 0, 200),
+            minP: clampNumber(s.movementSamplerMinP ?? 0, 0, 0, 1),
+            typical: clampNumber(s.movementSamplerTypical ?? 1, 1, 0, 1),
+            tfs: clampNumber(s.movementSamplerTfs ?? 1, 1, 0, 1),
+            mirostat: clampNumber(s.movementSamplerMirostat ?? 0, 0, 0, 2),
+            mirostatTau: clampNumber(s.movementSamplerMirostatTau ?? 5, 5, 0, 20),
+            mirostatEta: clampNumber(s.movementSamplerMirostatEta ?? 0.1, 0.1, 0, 2),
+            repPen: clampNumber(s.movementSamplerRepPen ?? 1, 1, 1, 2),
+            repetitionPenalty: clampNumber(s.movementSamplerRepetitionPenalty ?? 1, 1, 1, 2),
+        },
         fallbackMode: ['clockwise', 'random'].includes(s.movementFallbackMode) ? s.movementFallbackMode : 'clockwise',
         loopBreakEnabled: s.movementLoopBreakEnabled !== false,
-        stopOnChatChange: s.movementStopOnChatChange !== false,
         stopWhenPaused: s.movementStopWhenPaused !== false,
         systemPrompt: String(s.movementSystemPrompt || defaultSettings.movementSystemPrompt),
         finalInstruction: String(s.movementFinalInstruction || defaultSettings.movementFinalInstruction),
@@ -1657,7 +1667,7 @@ jQuery(async () => {
                         <div class="mg-card">
                             <div class="mg-title">Timing</div>
                             <div class="mg-grid2">
-                                <div><label for="mazegame_movement_interval">Decision Interval (seconds)</label><input id="mazegame_movement_interval" type="number" class="text_pole wide100p" value="20" min="5" max="120" step="1" /></div>
+                                <div><label for="mazegame_movement_interval">Decision Interval (seconds)</label><input id="mazegame_movement_interval" type="number" class="text_pole wide100p" value="20" min="0" max="3600" step="1" /></div>
                                 <div><label for="mazegame_movement_hold">Direction Hold (ms)</label><input id="mazegame_movement_hold" type="number" class="text_pole wide100p" value="200" min="50" max="1000" step="10" /></div>
                                 <div><label for="mazegame_movement_step_delay">Inter-step Delay (ms)</label><input id="mazegame_movement_step_delay" type="number" class="text_pole wide100p" value="150" min="0" max="2000" step="10" /></div>
                                 <div><label for="mazegame_movement_max_actions">Actions Per Tick (max)</label><input id="mazegame_movement_max_actions" type="number" class="text_pole wide100p" value="4" min="1" max="12" step="1" /></div>
@@ -1796,7 +1806,7 @@ jQuery(async () => {
     });
     $('#mazegame_movement_interval').val(extension_settings.mazegame.movementIntervalSeconds);
     $('#mazegame_movement_interval').on('input change', function () {
-        extension_settings.mazegame.movementIntervalSeconds = clampNumber($(this).val(), 20, 5, 120);
+        extension_settings.mazegame.movementIntervalSeconds = clampNumber($(this).val(), 20, 0, 3600);
         saveSettingsDebounced();
     });
     $('#mazegame_movement_hold').val(extension_settings.mazegame.movementHoldMs);
